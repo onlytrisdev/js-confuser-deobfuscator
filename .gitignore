@@ -8,10 +8,6 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
-# Local/Sandbox output
-sandbox_debug.js
-temp_test/
-
 # OS Files
 .DS_Store
 Thumbs.db
