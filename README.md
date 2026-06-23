@@ -75,7 +75,7 @@ Finally, we run a cleanup pass to remove any unused variables and function decla
 ## Directory Structure
 
 ```text
-js-deobfuscator/
+js-confuser-deobfuscator/
 ├── deobfuscator.js         # Driver script coordinating the 8 phases
 ├── package.json            # Node.js dependencies
 └── src/
@@ -95,8 +95,8 @@ js-deobfuscator/
 ### 1. Installation
 Clone the repository and install the dependencies:
 ```bash
-git clone https://github.com/yourusername/js-deobfuscator.git
-cd js-deobfuscator
+git clone https://github.com/onlytrisdev/js-confuser-deobfuscator.git
+cd js-confuser-deobfuscator
 npm install
 ```
 
