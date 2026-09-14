@@ -180,7 +180,8 @@ function unwrapDispatcher(ast) {
                             }
                         }
                         params = outerParams;
-                        bodyStmts.unshift(...prependedStmts);\n                    } else {
+                        bodyStmts.unshift(...prependedStmts);
+                    } else {
                         let stackName = null;
                         if (patternElements.length > 0 && t.isMemberExpression(patternElements[0]) && t.isIdentifier(patternElements[0].object)) {
                             stackName = patternElements[0].object.name;
