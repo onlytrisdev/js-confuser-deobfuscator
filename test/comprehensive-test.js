@@ -203,6 +203,30 @@ const OBFUSCATION_CONFIGS = [
             deadCode: true,
             movedDeclarations: true
         }
+    },
+    {
+        name: 'Custom Hard 4 (CFF 100% + DeadCode + MovedDeclarations + ASTScrambler)',
+        options: {
+            target: 'node',
+            controlFlowFlattening: 1,
+            deadCode: 1,
+            movedDeclarations: true,
+            astScrambler: true,
+            opaquePredicates: true,
+            minify: true
+        }
+    },
+    {
+        name: 'Custom Hard 5 (ObjectExtraction + StringSplitting + HexNumbers + Pack)',
+        options: {
+            target: 'node',
+            objectExtraction: true,
+            stringSplitting: true,
+            stringConcealing: true,
+            hexadecimalNumbers: true,
+            pack: true,
+            renameVariables: true
+        }
     }
 ];
 

@@ -2,6 +2,35 @@ const traverse = require('@babel/traverse').default;
 const t = require('@babel/types');
 const { evaluateCustom } = require('../utils/ast-utils');
 
+function isStaticMaskArray(fnPath, stackName) {
+    let hasWholeRef = false;
+    let hasDynamicIndex = false;
+
+    fnPath.traverse({
+        Identifier(idPath) {
+            if (idPath.getFunctionParent() !== fnPath) return;
+            if (idPath.node.name !== stackName) return;
+            if (idPath === fnPath.get('params.0.argument')) return;
+
+            const parent = idPath.parentPath;
+            if (parent.isMemberExpression() && parent.node.object === idPath.node) {
+                const prop = parent.node.property;
+                const isConstant = t.isNumericLiteral(prop) || 
+                                   t.isStringLiteral(prop) || 
+                                   (!parent.node.computed && t.isIdentifier(prop)) ||
+                                   (t.isUnaryExpression(prop) && prop.operator === '-' && t.isNumericLiteral(prop.argument));
+                if (!isConstant) {
+                    hasDynamicIndex = true;
+                }
+            } else {
+                hasWholeRef = true;
+            }
+        }
+    });
+
+    return !hasWholeRef && !hasDynamicIndex;
+}
+
 function unmaskVariables(ast) {
     let changed = false;
 
@@ -13,40 +42,12 @@ function unmaskVariables(ast) {
 
             const stackName = params[0].argument.name;
             if (!fnPath.get('body').isBlockStatement()) return;
-
-            // SAFETY CHECK: If stackName has whole-value references or dynamic indexing, it is a real array/state machine
-            let hasWholeRef = false;
-            let hasDynamicIndex = false;
-
-            fnPath.traverse({
-                Identifier(idPath) {
-                    if (idPath.getFunctionParent() !== fnPath) return;
-                    if (idPath.node.name !== stackName) return;
-                    if (idPath === fnPath.get('params.0.argument')) return;
-
-                    const parent = idPath.parentPath;
-                    if (parent.isMemberExpression() && parent.node.object === idPath.node) {
-                        const prop = parent.node.property;
-                        const isConstant = t.isNumericLiteral(prop) || 
-                                           t.isStringLiteral(prop) || 
-                                           (!parent.node.computed && t.isIdentifier(prop)) ||
-                                           (t.isUnaryExpression(prop) && prop.operator === '-' && t.isNumericLiteral(prop.argument));
-                        if (!isConstant) {
-                            hasDynamicIndex = true;
-                        }
-                    } else {
-                        hasWholeRef = true;
-                    }
-                }
-            });
-
-            if (hasWholeRef || hasDynamicIndex) return;
+            if (!isStaticMaskArray(fnPath, stackName)) return;
 
             const bodyStmts = fnPath.get('body').get('body');
             let origParamCount = 0;
             const lengthStmtsToRemove = [];
 
-            // Check body statements for stackName.length = N; or stackName["length"] = N;
             for (const stmtPath of bodyStmts) {
                 const stmtNode = stmtPath.node;
                 if (t.isExpressionStatement(stmtNode) && t.isAssignmentExpression(stmtNode.expression)) {
@@ -83,7 +84,6 @@ function unmaskVariables(ast) {
                 }
             }
 
-            // Collect all references to stack[key]
             const keyToVarName = new Map();
             const numericIndices = new Set();
             const localVars = new Set();
@@ -111,7 +111,6 @@ function unmaskVariables(ast) {
 
                     if (key !== null) {
                         if (!keyToVarName.has(key)) {
-                            // Determine if parameter or local variable
                             const numKey = Number(key);
                             if (!isNaN(numKey) && Number.isInteger(numKey) && numKey >= 0 && numKey < origParamCount) {
                                 keyToVarName.set(key, `_p${numKey}`);
@@ -128,9 +127,7 @@ function unmaskVariables(ast) {
 
             if (keyToVarName.size === 0 && lengthStmtsToRemove.length === 0) return;
 
-            // If origParamCount was 0, but numeric indices like 0, 1 exist:
             if (origParamCount === 0 && numericIndices.size > 0) {
-                // If 0 is referenced, consider consecutive 0..k as parameters
                 let maxParam = -1;
                 while (numericIndices.has(maxParam + 1)) {
                     maxParam++;
@@ -148,7 +145,6 @@ function unmaskVariables(ast) {
                 }
             }
 
-            // Replace member expressions with identifiers
             fnPath.traverse({
                 MemberExpression(mPath) {
                     if (mPath.getFunctionParent() !== fnPath) return;
@@ -177,7 +173,6 @@ function unmaskVariables(ast) {
                 }
             });
 
-            // Remove stack.length = N statements
             for (const lenStmt of lengthStmtsToRemove) {
                 try {
                     lenStmt.remove();
@@ -185,14 +180,12 @@ function unmaskVariables(ast) {
                 } catch (e) {}
             }
 
-            // Restore parameters: _p0, _p1, ...
             const newParams = [];
             for (let i = 0; i < origParamCount; i++) {
                 newParams.push(t.identifier(`_p${i}`));
             }
             fnPath.node.params = newParams;
 
-            // Declare local variables at top of function body
             if (localVars.size > 0) {
                 const decls = Array.from(localVars).map(v => t.variableDeclarator(t.identifier(v)));
                 fnPath.node.body.body.unshift(t.variableDeclaration('var', decls));

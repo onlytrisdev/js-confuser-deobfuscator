@@ -2,11 +2,19 @@ const traverse = require('@babel/traverse').default;
 const t = require('@babel/types');
 const generator = require('@babel/generator').default;
 
+function createLocalRestMaskDeclaration(fnExpr) {
+    if (fnExpr.params.length === 1 && t.isRestElement(fnExpr.params[0]) && t.isIdentifier(fnExpr.params[0].argument)) {
+        const maskId = fnExpr.params[0].argument.name;
+        return t.variableDeclaration('var', [
+            t.variableDeclarator(t.identifier(maskId), t.arrayExpression([]))
+        ]);
+    }
+    return null;
+}
+
 function unwrapDispatcher(ast) {
     let changed = false;
 
-    // 1. Locate all dispatcher functions
-    // A dispatcher function contains `var fns = { ... };` and `flagArg` logic
     const dispatchers = new Map();
 
     traverse(ast, {
@@ -107,18 +115,8 @@ function unwrapDispatcher(ast) {
 
                 let params = [];
                 const bodyStmts = [...fnExpr.body.body];
+                const maskDecl = createLocalRestMaskDeclaration(fnExpr);
 
-                // If fnExpr had rest parameter ...maskId, prepare var maskId = [];
-                // This ensures maskId is locally scoped and doesn't collide with or overwrite outer scope variables
-                let maskDecl = null;
-                if (fnExpr.params.length === 1 && t.isRestElement(fnExpr.params[0]) && t.isIdentifier(fnExpr.params[0].argument)) {
-                    const maskId = fnExpr.params[0].argument.name;
-                    maskDecl = t.variableDeclaration('var', [
-                        t.variableDeclarator(t.identifier(maskId), t.arrayExpression([]))
-                    ]);
-                }
-
-                // Scan bodyStmts for statement that unpacks payload
                 let payloadStmtIdx = -1;
                 let patternElements = null;
 
@@ -150,7 +148,6 @@ function unwrapDispatcher(ast) {
                 if (payloadStmtIdx !== -1 && patternElements) {
                     bodyStmts.splice(payloadStmtIdx, 1);
 
-                    // Check if nested array pattern: [flatObj, [p0, p1]]
                     let hasNested = false;
                     for (const el of patternElements) {
                         if (el && (t.isArrayPattern(el) || t.isArrayExpression(el))) {
@@ -317,14 +314,13 @@ function unwrapDispatcher(ast) {
 
     if (dispatchers.size === 0) return false;
 
-    // 2. Insert extracted function declarations before the dispatcher
-    for (const [dispatcherName, info] of dispatchers.entries()) {
+    for (const [, info] of dispatchers.entries()) {
         if (info.functionMap.size === 0) continue;
         const parentBlock = info.path.parentPath;
         if (!parentBlock.isBlock() && !parentBlock.isProgram()) continue;
 
         const bodyList = parentBlock.node.body || [];
-        for (const [key, fnInfo] of info.functionMap.entries()) {
+        for (const [, fnInfo] of info.functionMap.entries()) {
             const alreadyExists = bodyList.some(s => t.isFunctionDeclaration(s) && s.id && s.id.name === fnInfo.name);
             if (!alreadyExists) {
                 info.path.insertBefore(fnInfo.fnDecl);
@@ -332,26 +328,18 @@ function unwrapDispatcher(ast) {
         }
     }
 
-    // 3. Transform call sites
     for (const [dispatcherName, info] of dispatchers.entries()) {
         const { functionMap, payloadVarName, nonCallKey } = info;
 
-        // Pattern A: SequenceExpression (..., payload = [args], dispatcher(key, ...))
         traverse(ast, {
             SequenceExpression(path) {
                 const exprs = path.node.expressions;
                 if (exprs.length >= 2) {
                     const last = exprs[exprs.length - 1];
 
-                    // Check if last is dispatcher call or member expression around it
                     let callNode = last;
-                    let isWrappedReturn = false;
-                    let memberProp = null;
-
                     if (t.isMemberExpression(last)) {
                         callNode = last.object;
-                        memberProp = last.property;
-                        isWrappedReturn = true;
                     }
 
                     if ((t.isCallExpression(callNode) || t.isNewExpression(callNode)) && t.isIdentifier(callNode.callee, { name: dispatcherName })) {
@@ -360,7 +348,6 @@ function unwrapDispatcher(ast) {
                             const key = callArgs[0].value;
                             const fnInfo = functionMap.get(key);
                             if (fnInfo) {
-                                // Extract args from preceding expressions: payload = [arg1, arg2]
                                 let passedArgs = [];
                                 for (let i = exprs.length - 2; i >= 0; i--) {
                                     const expr = exprs[i];
@@ -389,13 +376,11 @@ function unwrapDispatcher(ast) {
                             const isNonCall = secondArg && t.isStringLiteral(secondArg) && 
                                 (secondArg.value === 'nonCall' || (nonCallKey && secondArg.value === nonCallKey));
 
-                            // Check if parent is member expression: dispatcher(...)["prop"]
                             let targetPath = path;
                             if (path.parentPath.isMemberExpression() && path.parentPath.node.object === path.node) {
                                 targetPath = path.parentPath;
                             }
 
-                            // If inside a SequenceExpression, let SequenceExpression visitor handle it
                             if (targetPath.parentPath.isSequenceExpression()) {
                                 return;
                             }
@@ -436,13 +421,11 @@ function unwrapDispatcher(ast) {
                             const isNonCall = secondArg && t.isStringLiteral(secondArg) && 
                                 (secondArg.value === 'nonCall' || (nonCallKey && secondArg.value === nonCallKey));
 
-                            // Check if parent is member expression: new dispatcher(...)["prop"]
                             let targetPath = path;
                             if (path.parentPath.isMemberExpression() && path.parentPath.node.object === path.node) {
                                 targetPath = path.parentPath;
                             }
 
-                            // If inside a SequenceExpression, let SequenceExpression visitor handle it
                             if (targetPath.parentPath.isSequenceExpression()) {
                                 return;
                             }
@@ -474,7 +457,6 @@ function unwrapDispatcher(ast) {
             }
         });
 
-        // Remove the dispatcher function only if all call sites resolved
         if (info.functionMap.size > 0) {
             let hasRemainingRefs = false;
             traverse(ast, {
@@ -495,7 +477,6 @@ function unwrapDispatcher(ast) {
         }
     }
 
-    // Remove unreferenced payload variables and cache variables
     traverse(ast, {
         VariableDeclarator(path) {
             for (const [, info] of dispatchers) {

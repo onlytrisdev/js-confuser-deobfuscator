@@ -1,22 +1,57 @@
 const traverse = require('@babel/traverse').default;
 const t = require('@babel/types');
 
+function normalizeFunctionParameters(restoredParams, fnPath, flatFnNode) {
+    const prependedParamStmts = [];
+    const neededVarDecls = [];
+    const normalized = restoredParams.map((param, idx) => {
+        if (!param) return fnPath.scope.generateUidIdentifier(`p${idx}`);
+        if (t.isIdentifier(param) || t.isPattern(param) || t.isRestElement(param)) {
+            return param;
+        }
+        const pId = fnPath.scope.generateUidIdentifier(`p${idx}`);
+        if (t.isMemberExpression(param) && t.isIdentifier(param.object)) {
+            const objName = param.object.name;
+            const hasDecl = fnPath.scope.hasBinding(objName) || flatFnNode.body.body.some(s =>
+                t.isVariableDeclaration(s) && s.declarations.some(d => t.isIdentifier(d.id, { name: objName }))
+            );
+            if (!hasDecl && !neededVarDecls.some(s => s.declarations.some(d => d.id.name === objName))) {
+                const initExpr = t.isNumericLiteral(param.property) ? t.arrayExpression([]) : t.objectExpression([]);
+                neededVarDecls.push(
+                    t.variableDeclaration('var', [
+                        t.variableDeclarator(t.identifier(objName), initExpr)
+                    ])
+                );
+            }
+        }
+        prependedParamStmts.push(
+            t.expressionStatement(t.assignmentExpression('=', t.cloneNode(param), t.cloneNode(pId)))
+        );
+        return pId;
+    });
+
+    if (neededVarDecls.length > 0) {
+        flatFnNode.body.body.unshift(...neededVarDecls);
+    }
+
+    let insertIdx = 0;
+    while (insertIdx < flatFnNode.body.body.length && t.isVariableDeclaration(flatFnNode.body.body[insertIdx])) {
+        insertIdx++;
+    }
+    flatFnNode.body.body.splice(insertIdx, 0, ...prependedParamStmts);
+    return normalized;
+}
+
 function unwrapFlatten(ast) {
     let changed = false;
 
     const flattenedWrappers = [];
 
-    // 1. Identify wrapper functions:
-    // function wrapper(...args) {
-    //   var flatObj = { get p1() { return id1; }, ... };
-    //   return flatFn(flatObj, args);
-    // }
     traverse(ast, {
         FunctionDeclaration(fnPath) {
             const body = fnPath.node.body.body;
             if (body.length < 2) return;
 
-            // Search body for return flatFn(flatObj, ...)
             let candidateFlatObjName = null;
             let candidateFlatFnName = null;
 
@@ -33,7 +68,6 @@ function unwrapFlatten(ast) {
 
             if (!candidateFlatFnName || !candidateFlatObjName) return;
 
-            // Verify candidateFlatObjName was initialized to an ObjectExpression in this function
             let flatObjExpr = null;
             for (const stmt of body) {
                 if (t.isVariableDeclaration(stmt)) {
@@ -65,11 +99,9 @@ function unwrapFlatten(ast) {
 
     if (flattenedWrappers.length === 0) return false;
 
-    // 2. Process each flattened wrapper
     for (const wrapper of flattenedWrappers) {
         const { fnPath, flatObjName, flatObjExpr, flatFnName } = wrapper;
 
-        // Find the flat function declaration
         let flatFnPath = null;
         let flatFnNode = null;
 
@@ -85,10 +117,9 @@ function unwrapFlatten(ast) {
 
         if (!flatFnNode || !flatFnPath) continue;
 
-        // Parse flat object properties
-        const getterMap = new Map(); // propName -> expression
-        const setterMap = new Map(); // propName -> identifier to assign to
-        const methodMap = new Map(); // propName -> function to call
+        const getterMap = new Map();
+        const setterMap = new Map();
+        const methodMap = new Map();
 
         for (const prop of flatObjExpr.properties) {
             let key = null;
@@ -98,19 +129,16 @@ function unwrapFlatten(ast) {
 
             if (t.isObjectMethod(prop)) {
                 if (prop.kind === 'get') {
-                    // return expr;
                     const retStmt = prop.body.body.find(s => t.isReturnStatement(s));
                     if (retStmt) {
                         getterMap.set(key, retStmt.argument);
                     }
                 } else if (prop.kind === 'set') {
-                    // target = val;
                     const stmt = prop.body.body.find(s => t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression));
                     if (stmt) {
                         setterMap.set(key, stmt.expression.left);
                     }
                 } else if (prop.kind === 'method') {
-                    // return fn(...args);
                     const retStmt = prop.body.body.find(s => t.isReturnStatement(s));
                     if (retStmt && t.isCallExpression(retStmt.argument)) {
                         methodMap.set(key, retStmt.argument.callee);
@@ -119,7 +147,6 @@ function unwrapFlatten(ast) {
             }
         }
 
-        // Check if flatParams[0] is actually used as flatObj
         const flatParams = flatFnNode.params;
         const candidateParam = flatParams[0];
         let isFirstParamFlatObj = false;
@@ -162,7 +189,6 @@ function unwrapFlatten(ast) {
         let restoredParams = [];
 
         if (isFirstParamFlatObj) {
-            // First parameter is flatObj, remaining parameter(s) represent original args
             if (flatParams.length >= 2) {
                 const secondParam = flatParams[1];
                 if (t.isArrayPattern(secondParam)) {
@@ -200,7 +226,6 @@ function unwrapFlatten(ast) {
                 }
             }
         } else {
-            // First param is not flatObj
             if (flatParams.length === 1 && t.isRestElement(flatParams[0]) &&
                 fnPath.node.params.length === 1 && t.isRestElement(fnPath.node.params[0])) {
                 const restParamName = flatParams[0].argument.name;
@@ -222,12 +247,10 @@ function unwrapFlatten(ast) {
             }
         }
 
-        // If restoredParams is empty or has rest element, but wrapper has specific params:
         if (restoredParams.length === 0 && fnPath.node.params.length > 0 && !t.isRestElement(fnPath.node.params[0])) {
             restoredParams = fnPath.node.params.map(p => t.cloneNode(p));
         }
 
-        // Replace references to flatObj inside flatFn (either via flatObjParamName or flatObjName, or aliases)
         const targetObjNodes = [];
         if (flatObjName) targetObjNodes.push(t.identifier(flatObjName));
         if (flatObjParamName) targetObjNodes.push(t.identifier(flatObjParamName));
@@ -266,14 +289,12 @@ function unwrapFlatten(ast) {
                             changed = true;
                         }
                     } else if (mPath.parentPath.isCallExpression() && mPath.parentPath.node.callee === mPath.node) {
-                        // Method call
                         const calleeTarget = methodMap.get(propName) || getterMap.get(propName);
                         if (calleeTarget) {
                             mPath.replaceWith(t.cloneNode(calleeTarget));
                             changed = true;
                         }
                     } else {
-                        // Getter
                         const expr = getterMap.get(propName);
                         if (expr) {
                             mPath.replaceWith(t.cloneNode(expr));
@@ -284,7 +305,6 @@ function unwrapFlatten(ast) {
             });
         }
 
-        // If flatObj was eliminated, remove any leftover assignments/references to flatObjParamName from flatFnNode.body
         if (isFirstParamFlatObj && flatObjParamName) {
             flatFnNode.body.body = flatFnNode.body.body.filter(stmt => {
                 if (t.isExpressionStatement(stmt) && t.isAssignmentExpression(stmt.expression)) {
@@ -300,50 +320,11 @@ function unwrapFlatten(ast) {
             });
         }
 
-        // Sanitize restoredParams to ensure every item is a valid FunctionParameter
-        const prependedParamStmts = [];
-        const neededVarDecls = [];
-        restoredParams = restoredParams.map((param, idx) => {
-            if (!param) return fnPath.scope.generateUidIdentifier(`p${idx}`);
-            if (t.isIdentifier(param) || t.isPattern(param) || t.isRestElement(param)) {
-                return param;
-            }
-            const pId = fnPath.scope.generateUidIdentifier(`p${idx}`);
-            if (t.isMemberExpression(param) && t.isIdentifier(param.object)) {
-                const objName = param.object.name;
-                const hasDecl = fnPath.scope.hasBinding(objName) || flatFnNode.body.body.some(s =>
-                    t.isVariableDeclaration(s) && s.declarations.some(d => t.isIdentifier(d.id, { name: objName }))
-                );
-                if (!hasDecl && !neededVarDecls.some(s => s.declarations.some(d => d.id.name === objName))) {
-                    const initExpr = t.isNumericLiteral(param.property) ? t.arrayExpression([]) : t.objectExpression([]);
-                    neededVarDecls.push(
-                        t.variableDeclaration('var', [
-                            t.variableDeclarator(t.identifier(objName), initExpr)
-                        ])
-                    );
-                }
-            }
-            prependedParamStmts.push(
-                t.expressionStatement(t.assignmentExpression('=', t.cloneNode(param), t.cloneNode(pId)))
-            );
-            return pId;
-        });
+        restoredParams = normalizeFunctionParameters(restoredParams, fnPath, flatFnNode);
 
-        if (neededVarDecls.length > 0) {
-            flatFnNode.body.body.unshift(...neededVarDecls);
-        }
-
-        let insertIdx = 0;
-        while (insertIdx < flatFnNode.body.body.length && t.isVariableDeclaration(flatFnNode.body.body[insertIdx])) {
-            insertIdx++;
-        }
-        flatFnNode.body.body.splice(insertIdx, 0, ...prependedParamStmts);
-
-        // In wrapper function: replace body with flatFn body, and restore params
         fnPath.node.body = t.cloneNode(flatFnNode.body);
         fnPath.node.params = restoredParams;
 
-        // Remove the flat function
         try {
             flatFnPath.remove();
         } catch (e) {}
