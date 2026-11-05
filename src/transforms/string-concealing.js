@@ -1,14 +1,12 @@
-const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 const generator = require('@babel/generator').default;
 const t = require('@babel/types');
 const vm = require('vm');
-const { numericToAST } = require('../utils/ast-utils');
+const { numericToAST, evaluateCustom } = require('../utils/ast-utils');
 
 function decodeStrings(ast) {
     let changed = false;
 
-    // 1. Create a safe VM sandbox
     const fakeConsole = { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
     const ctx = vm.createContext({
         TextDecoder: typeof TextDecoder !== 'undefined' ? TextDecoder : undefined,
@@ -51,59 +49,140 @@ function decodeStrings(ast) {
         return null;
     }
 
-    function isRetrieveFunction(node) {
-        let body = null;
-        if (t.isFunctionDeclaration(node) || t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
-            body = node.body;
+    const topLevelFnNames = new Set();
+    for (const stmt of ast.program.body) {
+        if (t.isFunctionDeclaration(stmt) && stmt.id) {
+            topLevelFnNames.add(stmt.id.name);
         }
-        if (!body || !t.isBlockStatement(body)) return false;
-        if (body.body.length > 6) return false;
+    }
 
-        let hasSliceReturn = false;
-        for (const s of body.body) {
-            if (t.isWhileStatement(s) || t.isForStatement(s) || t.isSwitchStatement(s) || t.isDoWhileStatement(s)) {
-                return false;
+    function isSafeCallCallee(callee, allowedFnNames) {
+        if (t.isFunctionExpression(callee) || t.isArrowFunctionExpression(callee)) return true;
+        if (t.isIdentifier(callee) && allowedFnNames.has(callee.name)) return true;
+        if (t.isMemberExpression(callee) && t.isIdentifier(callee.object, { name: 'Object' })) {
+            const prop = callee.property;
+            if (t.isIdentifier(prop, { name: 'create' }) || t.isStringLiteral(prop, { value: 'create' })) {
+                return true;
             }
-            if (t.isReturnStatement(s)) {
-                const arg = s.argument;
-                if (t.isCallExpression(arg)) {
-                    traverse(arg, {
-                        noScope: true,
-                        MemberExpression(mp) {
-                            const p = mp.node.property;
-                            if (t.isIdentifier(p, { name: 'slice' }) || t.isStringLiteral(p, { value: 'slice' })) {
-                                hasSliceReturn = true;
-                            }
-                        }
-                    });
+        }
+        return false;
+    }
+
+    function isSafeValueExpr(node, allowedFnNames) {
+        if (!node) return false;
+        if (t.isLiteral(node) || t.isIdentifier(node) || t.isMemberExpression(node) ||
+            t.isLogicalExpression(node) || t.isBinaryExpression(node) || t.isUnaryExpression(node) ||
+            t.isConditionalExpression(node) || t.isArrayExpression(node) || t.isObjectExpression(node) ||
+            t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+            return true;
+        }
+        if (t.isCallExpression(node)) {
+            return isSafeCallCallee(node.callee, allowedFnNames);
+        }
+        return false;
+    }
+
+    function isSafeAssignmentExpr(expr, allowedFnNames) {
+        if (t.isAssignmentExpression(expr)) {
+            return isSafeValueExpr(expr.right, allowedFnNames);
+        }
+        if (t.isSequenceExpression(expr)) {
+            return expr.expressions.length > 0 && expr.expressions.every(e => isSafeAssignmentExpr(e, allowedFnNames));
+        }
+        if (t.isCallExpression(expr) && t.isIdentifier(expr.callee) && allowedFnNames.has(expr.callee.name)) {
+            return expr.arguments.length > 0 && expr.arguments.every(e => isSafeAssignmentExpr(e, allowedFnNames));
+        }
+        return false;
+    }
+
+    function isBase91Function(fnNode) {
+        if (!fnNode || !fnNode.body) return false;
+        const nums = new Set();
+        traverse(fnNode.body, {
+            noScope: true,
+            NumericLiteral(np) {
+                nums.add(np.node.value);
+            }
+        });
+        return nums.has(91) && (nums.has(8191) || nums.has(255));
+    }
+
+    function collectBase91FunctionNames(stmts) {
+        const names = new Set();
+        for (const s of stmts) {
+            if (t.isFunctionDeclaration(s) && s.id && isBase91Function(s)) {
+                names.add(s.id.name);
+            } else if (t.isVariableDeclaration(s)) {
+                for (const d of s.declarations) {
+                    if (t.isIdentifier(d.id) && (t.isFunctionExpression(d.init) || t.isArrowFunctionExpression(d.init)) && isBase91Function(d.init)) {
+                        names.add(d.id.name);
+                    }
+                }
+            } else if (t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression)) {
+                const { left, right } = s.expression;
+                if (t.isIdentifier(left) && (t.isFunctionExpression(right) || t.isArrowFunctionExpression(right)) && isBase91Function(right)) {
+                    names.add(left.name);
                 }
             }
         }
-        return hasSliceReturn;
+        return names;
     }
 
-    // 2. Identify top-level boilerplate statements in VM
-    // Statements that set up string arrays, decoders, and encoding helpers
-    const boilerplateStmts = [];
-    for (const stmt of ast.program.body) {
-        if (t.isReturnStatement(stmt)) continue;
-        if (t.isExpressionStatement(stmt)) {
-            const expr = stmt.expression;
-            if (t.isAssignmentExpression(expr) && t.isIdentifier(expr.left) && t.isStringLiteral(expr.right)) {
-                boilerplateStmts.push(stmt);
-            }
-            continue;
+    function isRetrieveFunctionNode(fnNode, base91Names) {
+        if (!fnNode) return false;
+        let body = null;
+        if (t.isFunctionDeclaration(fnNode) || t.isFunctionExpression(fnNode) || t.isArrowFunctionExpression(fnNode)) {
+            body = fnNode.body;
         }
+        if (!body) return false;
+        const stmts = t.isBlockStatement(body) ? body.body : [t.returnStatement(body)];
+        if (stmts.length > 10) return false;
 
-        if (t.isFunctionDeclaration(stmt) || t.isVariableDeclaration(stmt)) {
-            boilerplateStmts.push(stmt);
+        let matched = false;
+        for (const s of stmts) {
+            if (t.isWhileStatement(s) || t.isForStatement(s) || t.isSwitchStatement(s) || t.isDoWhileStatement(s)) {
+                return false;
+            }
+            if (t.isReturnStatement(s) && s.argument) {
+                const retWrapper = t.file(t.program([s]));
+                traverse(retWrapper, {
+                    noScope: true,
+                    CallExpression(cp) {
+                        const callee = cp.node.callee;
+                        if (t.isIdentifier(callee) && base91Names && base91Names.has(callee.name)) {
+                            matched = true;
+                        } else if (t.isSequenceExpression(callee) && callee.expressions.length > 0) {
+                            const last = callee.expressions[callee.expressions.length - 1];
+                            if (t.isIdentifier(last) && base91Names && base91Names.has(last.name)) {
+                                matched = true;
+                            }
+                        }
+                    }
+                });
+            }
         }
+        return matched;
+    }
+
+    function isRetrieveFunction(node, base91Names) {
+        if (t.isFunctionDeclaration(node) || t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+            return isRetrieveFunctionNode(node, base91Names);
+        }
+        if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+            return isRetrieveFunctionNode(node.init, base91Names);
+        }
+        if (t.isAssignmentExpression(node) && t.isIdentifier(node.left)) {
+            return isRetrieveFunctionNode(node.right, base91Names);
+        }
+        if (t.isExpressionStatement(node) && t.isAssignmentExpression(node.expression) && t.isIdentifier(node.expression.left)) {
+            return isRetrieveFunctionNode(node.expression.right, base91Names);
+        }
+        return false;
     }
 
     const getGlobalFns = [];
     traverse(ast, {
         FunctionDeclaration(path) {
-            // Only consider top-level helper functions for getGlobal simplification
             if (!path.parentPath.isProgram()) return;
             let hasGlobals = false;
 
@@ -112,7 +191,7 @@ function decodeStrings(ast) {
                     if (arrPath.getFunctionParent() !== path) return;
                     if (arrPath.node.elements.length >= 3) {
                         const code = generator(arrPath.node).code;
-                        if (code.includes('globalThis') && code.includes('global') && code.includes('window')) {
+                        if (code.includes('globalThis') && code.includes('global') && (code.includes('window') || code.includes('Function'))) {
                             hasGlobals = true;
                         }
                     }
@@ -128,27 +207,37 @@ function decodeStrings(ast) {
         }
     });
 
-    ast.program.body.forEach(s => {
-        if (t.isVariableDeclaration(s)) {
-            s.declarations.forEach(d => {
-                if (t.isIdentifier(d.id) && typeof ctx[d.id.name] === 'undefined') {
-                    ctx[d.id.name] = ctx;
-                }
-            });
+    const declStmts = [];
+    const boilerplateStmts = [];
+    for (const stmt of ast.program.body) {
+        if (t.isFunctionDeclaration(stmt) || t.isVariableDeclaration(stmt)) {
+            declStmts.push(stmt);
+            boilerplateStmts.push(stmt);
+        } else if (t.isExpressionStatement(stmt) && isSafeAssignmentExpr(stmt.expression, topLevelFnNames)) {
+            boilerplateStmts.push(stmt);
+        }
+    }
+
+    for (const stmt of declStmts) {
+        try {
+            vm.runInContext(generator(stmt).code, ctx, { timeout: 500 });
+        } catch (e) {}
+    }
+
+    getGlobalFns.forEach(fn => {
+        if (typeof ctx[fn] === 'undefined') {
+            ctx[fn] = () => ctx;
         }
     });
 
-    try {
-        const setupCode = generator(t.program(boilerplateStmts)).code;
-        vm.runInContext(setupCode, ctx, { timeout: 1500 });
-        getGlobalFns.forEach(fn => {
-            if (typeof ctx[fn] === 'undefined') {
-                ctx[fn] = () => ctx;
-            }
-        });
-    } catch (e) {}
+    for (const stmt of boilerplateStmts) {
+        if (t.isFunctionDeclaration(stmt)) continue;
+        try {
+            vm.runInContext(generator(stmt).code, ctx, { timeout: 500 });
+        } catch (e) {}
+    }
 
-    // 3. Register decoders accurately per Scope block
+    const topBase91Names = collectBase91FunctionNames(ast.program.body);
     const bindingToFn = new Map();
 
     traverse(ast, {
@@ -157,49 +246,150 @@ function decodeStrings(ast) {
             const bodyStmts = block.body || [];
             if (bodyStmts.length === 0) return;
 
-            const fnDecls = bodyStmts.filter(s => t.isFunctionDeclaration(s));
-            const retrieveFns = fnDecls.filter(isRetrieveFunction);
+            const localFnNames = new Set(topLevelFnNames);
+            for (const s of bodyStmts) {
+                if (t.isFunctionDeclaration(s) && s.id) {
+                    localFnNames.add(s.id.name);
+                }
+            }
 
-            if (retrieveFns.length > 0) {
-                const codeToRun = fnDecls.map(f => generator(f).code).join('\n');
-                for (const rf of retrieveFns) {
-                    const fnName = rf.id.name;
-                    const binding = path.scope.getBinding(fnName);
-                    if (binding) {
-                        try {
-                            const iife = `(function() {\n${codeToRun}\nreturn ${fnName};\n})()`;
-                            const localFn = vm.runInContext(iife, ctx);
-                            if (typeof localFn === 'function') {
-                                bindingToFn.set(binding, localFn);
-                            }
-                        } catch (e) {}
+            const localBase91Names = new Set([...topBase91Names, ...collectBase91FunctionNames(bodyStmts)]);
+            const retrieveNames = [];
+
+            for (const s of bodyStmts) {
+                if (t.isFunctionDeclaration(s) && s.id && isRetrieveFunction(s, localBase91Names)) {
+                    retrieveNames.push(s.id.name);
+                } else if (t.isVariableDeclaration(s)) {
+                    for (const d of s.declarations) {
+                        if (t.isIdentifier(d.id) && isRetrieveFunction(d, localBase91Names)) {
+                            retrieveNames.push(d.id.name);
+                        }
                     }
+                } else if (t.isExpressionStatement(s) && t.isAssignmentExpression(s.expression)) {
+                    if (t.isIdentifier(s.expression.left) && isRetrieveFunction(s.expression, localBase91Names)) {
+                        retrieveNames.push(s.expression.left.name);
+                    }
+                } else if (t.isIfStatement(s) && t.isUnaryExpression(s.test, { operator: '!' }) && t.isIdentifier(s.test.argument)) {
+                    const conseqStmts = t.isBlockStatement(s.consequent) ? s.consequent.body : [s.consequent];
+                    for (const cs of conseqStmts) {
+                        if (t.isExpressionStatement(cs) && t.isAssignmentExpression(cs.expression) && t.isIdentifier(cs.expression.left)) {
+                            if (isBase91Function(cs.expression.right)) {
+                                localBase91Names.add(cs.expression.left.name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (const s of bodyStmts) {
+                if (t.isIfStatement(s) && t.isUnaryExpression(s.test, { operator: '!' }) && t.isIdentifier(s.test.argument)) {
+                    const conseqStmts = t.isBlockStatement(s.consequent) ? s.consequent.body : [s.consequent];
+                    for (const cs of conseqStmts) {
+                        if (t.isExpressionStatement(cs) && t.isAssignmentExpression(cs.expression) && t.isIdentifier(cs.expression.left)) {
+                            if (isRetrieveFunction(cs.expression, localBase91Names)) {
+                                retrieveNames.push(cs.expression.left.name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (retrieveNames.length === 0) return;
+
+            const setupStmts = [];
+            const parentFunc = path.isBlockStatement() && path.parentPath.isFunction() ? path.parentPath.node : null;
+            if (parentFunc && parentFunc.params) {
+                const paramIds = [];
+                for (const p of parentFunc.params) {
+                    if (t.isIdentifier(p)) paramIds.push(t.variableDeclarator(t.identifier(p.name)));
+                }
+                if (paramIds.length > 0) {
+                    setupStmts.push(t.variableDeclaration('var', paramIds));
+                }
+            }
+
+            for (const s of bodyStmts) {
+                if (t.isFunctionDeclaration(s)) {
+                    setupStmts.push(s);
+                } else if (t.isVariableDeclaration(s)) {
+                    const safeDecls = [];
+                    for (const d of s.declarations) {
+                        if (!d.init || isSafeValueExpr(d.init, localFnNames)) {
+                            safeDecls.push(d);
+                        } else if (t.isIdentifier(d.id)) {
+                            safeDecls.push(t.variableDeclarator(t.identifier(d.id.name)));
+                        }
+                    }
+                    if (safeDecls.length > 0) {
+                        setupStmts.push(t.variableDeclaration('var', safeDecls));
+                    }
+                } else if (t.isExpressionStatement(s) && isSafeAssignmentExpr(s.expression, localFnNames)) {
+                    setupStmts.push(s);
+                } else if (t.isIfStatement(s) && t.isUnaryExpression(s.test, { operator: '!' }) && t.isIdentifier(s.test.argument)) {
+                    const conseqStmts = t.isBlockStatement(s.consequent) ? s.consequent.body : [s.consequent];
+                    for (const cs of conseqStmts) {
+                        if (t.isExpressionStatement(cs) && t.isAssignmentExpression(cs.expression) && isSafeAssignmentExpr(cs.expression, localFnNames)) {
+                            setupStmts.push(cs);
+                        }
+                    }
+                }
+            }
+
+            const codeToRun = setupStmts.map(s => `try { ${generator(s).code} } catch (e) {}`).join('\n');
+            const fnDeclsOnly = setupStmts.filter(s => t.isFunctionDeclaration(s)).map(s => generator(s).code).join('\n');
+
+            for (const fnName of retrieveNames) {
+                const binding = path.scope.getBinding(fnName);
+                if (binding) {
+                    try {
+                        const iife = `(function() {\n${fnDeclsOnly}\n${codeToRun}\nreturn ${fnName};\n})()`;
+                        const localFn = vm.runInContext(iife, ctx, { timeout: 500 });
+                        if (typeof localFn === 'function') {
+                            bindingToFn.set(binding, localFn);
+                        }
+                    } catch (e) {}
                 }
             }
         }
     });
 
-    // 4. Decode retrieve function calls strictly bound to their scope
     traverse(ast, {
         CallExpression(path) {
-            if (!t.isIdentifier(path.node.callee)) return;
-            const name = path.node.callee.name;
+            let calleeId = null;
+            if (t.isIdentifier(path.node.callee)) {
+                calleeId = path.node.callee;
+            } else if (t.isSequenceExpression(path.node.callee)) {
+                const exprs = path.node.callee.expressions;
+                if (exprs.length > 0 && t.isIdentifier(exprs[exprs.length - 1])) {
+                    calleeId = exprs[exprs.length - 1];
+                }
+            }
+            if (!calleeId) return;
+
+            const name = calleeId.name;
             const binding = path.scope.getBinding(name);
             if (!binding) return;
             const decoder = bindingToFn.get(binding);
             if (!decoder) return;
 
-            // Evaluate arguments
             const args = [];
             let ok = true;
-            for (const arg of path.node.arguments) {
-                if (t.isNumericLiteral(arg)) args.push(arg.value);
-                else if (t.isStringLiteral(arg)) args.push(arg.value);
-                else if (t.isUnaryExpression(arg) && arg.operator === '-' && t.isNumericLiteral(arg.argument)) {
+            for (let i = 0; i < path.node.arguments.length; i++) {
+                const arg = path.node.arguments[i];
+                if (t.isNumericLiteral(arg)) {
+                    args.push(arg.value);
+                } else if (t.isStringLiteral(arg)) {
+                    args.push(arg.value);
+                } else if (t.isUnaryExpression(arg) && arg.operator === '-' && t.isNumericLiteral(arg.argument)) {
                     args.push(-arg.argument.value);
                 } else {
-                    ok = false;
-                    break;
+                    const evalRes = evaluateCustom(path.get(`arguments.${i}`));
+                    if (evalRes.confident && (typeof evalRes.value === 'number' || typeof evalRes.value === 'string')) {
+                        args.push(evalRes.value);
+                    } else {
+                        ok = false;
+                        break;
+                    }
                 }
             }
             if (!ok || args.length === 0) return;
@@ -217,14 +407,21 @@ function decodeStrings(ast) {
         }
     });
 
-    // 5. String concatenation folding: "a" + "b" -> "ab"
     traverse(ast, {
-        BinaryExpression(path) {
-            if (path.node.operator === '+' &&
-                t.isStringLiteral(path.node.left) &&
-                t.isStringLiteral(path.node.right)) {
-                path.replaceWith(t.stringLiteral(path.node.left.value + path.node.right.value));
-                changed = true;
+        BinaryExpression: {
+            exit(path) {
+                if (path.node.operator !== '+') return;
+                const left = path.node.left;
+                const right = path.node.right;
+                if (t.isStringLiteral(left) && t.isStringLiteral(right)) {
+                    path.replaceWith(t.stringLiteral(left.value + right.value));
+                    changed = true;
+                } else if (t.isBinaryExpression(left, { operator: '+' }) &&
+                    t.isStringLiteral(left.right) &&
+                    t.isStringLiteral(right)) {
+                    path.replaceWith(t.binaryExpression('+', left.left, t.stringLiteral(left.right.value + right.value)));
+                    changed = true;
+                }
             }
         }
     });
