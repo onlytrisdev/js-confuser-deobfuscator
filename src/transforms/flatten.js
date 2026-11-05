@@ -253,9 +253,14 @@ function unwrapFlatten(ast) {
                     else if (!mPath.node.computed && t.isIdentifier(mPath.node.property)) propName = mPath.node.property.name;
                     if (!propName) return;
 
-                    // Check if setter (left side of assignment)
                     if (mPath.parentPath.isAssignmentExpression() && mPath.parentPath.node.left === mPath.node) {
-                        const target = setterMap.get(propName);
+                        const target = setterMap.get(propName) || getterMap.get(propName);
+                        if (target) {
+                            mPath.replaceWith(t.cloneNode(target));
+                            changed = true;
+                        }
+                    } else if (mPath.parentPath.isUpdateExpression() && mPath.parentPath.node.argument === mPath.node) {
+                        const target = setterMap.get(propName) || getterMap.get(propName);
                         if (target) {
                             mPath.replaceWith(t.cloneNode(target));
                             changed = true;

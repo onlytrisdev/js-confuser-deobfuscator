@@ -201,6 +201,140 @@ function unmaskVariables(ast) {
         }
     });
 
+    const ARRAY_OBJ_METHODS = new Set([
+        'push', 'pop', 'shift', 'unshift', 'splice', 'slice', 'join', 'map', 'reduce',
+        'forEach', 'filter', 'concat', 'indexOf', 'includes', 'keys', 'values', 'entries',
+        'hasOwnProperty', 'toString', 'valueOf'
+    ]);
+
+    function getStaticMaskKey(mNode) {
+        const prop = mNode.property;
+        if (t.isNumericLiteral(prop)) {
+            return prop.value < 0 ? `neg_${Math.abs(prop.value)}` : prop.value.toString();
+        }
+        if (t.isStringLiteral(prop)) {
+            return prop.value;
+        }
+        if (t.isUnaryExpression(prop) && prop.operator === '-' && t.isNumericLiteral(prop.argument)) {
+            return `neg_${prop.argument.value}`;
+        }
+        if (!mNode.computed && t.isIdentifier(prop)) {
+            return prop.name;
+        }
+        return null;
+    }
+
+    traverse(ast, {
+        Function(fnPath) {
+            if (!fnPath.get('body').isBlockStatement()) return;
+            fnPath.scope.crawl();
+
+            const paramNames = new Set();
+            for (const p of fnPath.node.params) {
+                if (t.isIdentifier(p)) paramNames.add(p.name);
+            }
+
+            const bodyPaths = fnPath.get('body.body');
+            for (const stmtPath of bodyPaths) {
+                if (!stmtPath.isVariableDeclaration()) continue;
+                for (const declPath of stmtPath.get('declarations')) {
+                    const decl = declPath.node;
+                    if (!t.isIdentifier(decl.id) || !decl.init) continue;
+                    const isEmptyArr = t.isArrayExpression(decl.init) && decl.init.elements.length === 0;
+                    const isEmptyObj = t.isObjectExpression(decl.init) && decl.init.properties.length === 0;
+                    if (!isEmptyArr && !isEmptyObj) continue;
+
+                    const stackName = decl.id.name;
+                    const binding = fnPath.scope.getBinding(stackName);
+                    if (!binding || binding.constantViolations.length > 0 || binding.referencePaths.length === 0) continue;
+
+                    let valid = true;
+                    for (const refPath of binding.referencePaths) {
+                        if (refPath.getFunctionParent() !== fnPath) {
+                            valid = false;
+                            break;
+                        }
+                        const parent = refPath.parentPath;
+                        if (!parent || !parent.isMemberExpression() || parent.node.object !== refPath.node) {
+                            valid = false;
+                            break;
+                        }
+                        const key = getStaticMaskKey(parent.node);
+                        if (key === null || ARRAY_OBJ_METHODS.has(key)) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if (!valid) continue;
+
+                    const keyToVarName = new Map();
+                    const localVars = new Set();
+                    const stmtsToRemove = [];
+
+                    for (const sPath of fnPath.get('body.body')) {
+                        if (!sPath.isExpressionStatement()) continue;
+                        const expr = sPath.node.expression;
+                        if (!t.isAssignmentExpression(expr, { operator: '=' })) continue;
+                        if (!t.isMemberExpression(expr.left) || !t.isIdentifier(expr.left.object, { name: stackName })) continue;
+                        const key = getStaticMaskKey(expr.left);
+                        if (key === 'length') {
+                            stmtsToRemove.push(sPath);
+                            continue;
+                        }
+                        if (key !== null && t.isIdentifier(expr.right) && paramNames.has(expr.right.name) && !keyToVarName.has(key)) {
+                            const pB = fnPath.scope.getBinding(expr.right.name);
+                            if (pB && pB.constantViolations.length === 0 && pB.referencePaths.length === 1) {
+                                keyToVarName.set(key, expr.right.name);
+                                stmtsToRemove.push(sPath);
+                            }
+                        }
+                    }
+
+                    for (const refPath of binding.referencePaths) {
+                        const parent = refPath.parentPath;
+                        if (!parent || !parent.isMemberExpression()) continue;
+                        const key = getStaticMaskKey(parent.node);
+                        if (key === null || key === 'length') continue;
+                        if (!keyToVarName.has(key)) {
+                            const cleanKey = key.replace(/[^a-zA-Z0-9_$]/g, '_');
+                            const vName = `_v_${cleanKey}`;
+                            keyToVarName.set(key, vName);
+                            localVars.add(vName);
+                        }
+                    }
+
+                    for (const sPath of stmtsToRemove) {
+                        if (!sPath.removed) sPath.remove();
+                    }
+
+                    for (const refPath of [...binding.referencePaths]) {
+                        if (refPath.removed || !refPath.parentPath || refPath.parentPath.removed) continue;
+                        const parent = refPath.parentPath;
+                        if (parent.isMemberExpression() && parent.node.object === refPath.node) {
+                            const key = getStaticMaskKey(parent.node);
+                            if (key !== null && keyToVarName.has(key)) {
+                                parent.replaceWith(t.identifier(keyToVarName.get(key)));
+                            }
+                        }
+                    }
+
+                    const parentVarDecl = declPath.parentPath;
+                    if (!declPath.removed) declPath.remove();
+                    if (parentVarDecl && !parentVarDecl.removed && parentVarDecl.isVariableDeclaration() && parentVarDecl.node.declarations.length === 0) {
+                        parentVarDecl.remove();
+                    }
+
+                    if (localVars.size > 0) {
+                        const decls = Array.from(localVars).map(v => t.variableDeclarator(t.identifier(v)));
+                        fnPath.node.body.body.unshift(t.variableDeclaration('var', decls));
+                    }
+
+                    changed = true;
+                }
+            }
+        }
+    });
+
     return changed;
 }
 

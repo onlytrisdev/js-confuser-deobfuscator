@@ -69,17 +69,32 @@ function unwrapDispatcher(ast) {
                 }
             });
 
-            // Safety check: if dispatcher contains local helper FunctionDeclarations that
-            // dispatched functions rely on via closure, skip unwrapping to avoid breaking execution.
-            let hasLocalHelperFns = false;
-            path.get('body.body').forEach(s => {
-                if (s.isFunctionDeclaration()) hasLocalHelperFns = true;
-            });
-            if (hasLocalHelperFns) return;
             if (!fnsObject) return;
 
-            // Extract each dispatched function
-            const functionMap = new Map(); // key -> { fnNode, params, name }
+            const fnsIds = new Set();
+            const fnsWrapper = t.file(t.program([t.expressionStatement(t.cloneNode(fnsObject))]));
+            traverse(fnsWrapper, {
+                noScope: true,
+                Identifier(ip) {
+                    fnsIds.add(ip.node.name);
+                }
+            });
+
+            let hasLocalHelperFns = false;
+            path.get('body.body').forEach(s => {
+                if (s.isFunctionDeclaration()) {
+                    const fnId = s.node.id && s.node.id.name;
+                    if (fnId && fnsIds.has(fnId)) {
+                        hasLocalHelperFns = true;
+                    } else {
+                        s.remove();
+                    }
+                }
+            });
+            if (hasLocalHelperFns) return;
+
+            const functionMap = new Map();
+            const usedNames = new Set();
 
             for (const prop of fnsObject.properties) {
                 let key = null;
@@ -270,7 +285,13 @@ function unwrapDispatcher(ast) {
 
                 const targetScope = path.parentPath.scope || path.scope;
                 const cleanKey = key.replace(/[^a-zA-Z0-9_$]/g, '_');
-                const standaloneFnName = targetScope.generateUidIdentifier(`_disp_fn_${cleanKey}`).name;
+                const baseName = (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(cleanKey) && cleanKey !== 'function' && cleanKey !== 'class' && cleanKey !== 'return' && cleanKey !== 'default')
+                    ? cleanKey
+                    : `fn_${cleanKey}`;
+                const standaloneFnName = (!targetScope.hasBinding(baseName) && !usedNames.has(baseName))
+                    ? baseName
+                    : targetScope.generateUidIdentifier(baseName).name;
+                usedNames.add(standaloneFnName);
                 const newFnDecl = t.functionDeclaration(
                     t.identifier(standaloneFnName),
                     params,

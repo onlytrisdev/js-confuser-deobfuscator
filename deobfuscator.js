@@ -49,9 +49,12 @@ function deobfuscate(inputPath, outputPath) {
         if (unwrapFlatten(ast)) changed = true;
         if (unwrapCFF(ast)) changed = true;
         if (unmaskVariables(ast)) changed = true;
+        polishAST(ast);
+        if (cleanReachabilityDCE(ast)) changed = true;
     }
 
     console.log('[+] Step 4: Running Scope-Aware Reachability DCE...');
+    polishAST(ast);
     cleanReachabilityDCE(ast);
 
     console.log('[+] Step 5: Polishing AST syntax and literals...');

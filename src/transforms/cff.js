@@ -588,6 +588,23 @@ function restoreCFFParamsAndFunctions(ast) {
                     }
                     p.replaceWith(t.functionDeclaration(t.identifier(fnName), right.params, right.body, right.generator, right.async));
                     changed = true;
+                } else if (t.isClassExpression(right)) {
+                    const declBlock = b.path.findParent(anc => anc.isBlockStatement() || anc.isProgram());
+                    if (declBlock === p.parentPath) {
+                        if (right.id && t.isIdentifier(right.id) && right.id.name !== fnName) {
+                            const rightPath = p.get('expression.right');
+                            if (rightPath && rightPath.scope) {
+                                rightPath.scope.rename(right.id.name, fnName);
+                            }
+                        }
+                        const declParent = b.path.parentPath;
+                        b.path.remove();
+                        if (declParent && !declParent.removed && declParent.isVariableDeclaration() && declParent.node.declarations.length === 0) {
+                            declParent.remove();
+                        }
+                        p.replaceWith(t.classDeclaration(t.identifier(fnName), right.superClass, right.body, right.decorators));
+                        changed = true;
+                    }
                 } else if (
                     t.isStringLiteral(right) ||
                     t.isNumericLiteral(right) ||

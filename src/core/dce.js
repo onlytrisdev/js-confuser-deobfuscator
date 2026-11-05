@@ -27,6 +27,9 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
     }
     traverse(fnNode.body, {
         noScope: true,
+        Function(p) {
+            p.skip();
+        },
         VariableDeclarator(p) {
             if (t.isIdentifier(p.node.id)) localNames.add(p.node.id.name);
         },
@@ -37,6 +40,9 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
 
     traverse(fnNode.body, {
         noScope: true,
+        Function(p) {
+            p.skip();
+        },
         Identifier(p) {
             if (p.node.name === 'console') {
                 safe = false;
@@ -119,18 +125,23 @@ function isPureOrRemovableExpr(node, topLevelFns) {
             return false;
         }
         const callee = node.callee;
-        if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.object) && t.isIdentifier(callee.property)) {
-            if (callee.object.name === 'Object' && ['create', 'keys', 'values', 'entries', 'freeze', 'getOwnPropertyDescriptor', 'getOwnPropertyNames', 'getPrototypeOf'].includes(callee.property.name)) {
-                return true;
-            }
-            if (callee.object.name === 'String' && ['fromCharCode', 'fromCodePoint', 'raw'].includes(callee.property.name)) {
-                return true;
-            }
-            if (callee.object.name === 'Array' && ['isArray', 'from', 'of'].includes(callee.property.name)) {
-                return true;
-            }
-            if (callee.object.name === 'Math') {
-                return true;
+        if (t.isMemberExpression(callee) && t.isIdentifier(callee.object)) {
+            const propName = !callee.computed && t.isIdentifier(callee.property)
+                ? callee.property.name
+                : (callee.computed && t.isStringLiteral(callee.property) ? callee.property.value : null);
+            if (propName) {
+                if (callee.object.name === 'Object' && ['create', 'keys', 'values', 'entries', 'freeze', 'getOwnPropertyDescriptor', 'getOwnPropertyNames', 'getPrototypeOf'].includes(propName)) {
+                    return true;
+                }
+                if (callee.object.name === 'String' && ['fromCharCode', 'fromCodePoint', 'raw'].includes(propName)) {
+                    return true;
+                }
+                if (callee.object.name === 'Array' && ['isArray', 'from', 'of'].includes(propName)) {
+                    return true;
+                }
+                if (callee.object.name === 'Math') {
+                    return true;
+                }
             }
         }
         if (t.isFunctionExpression(callee) || t.isArrowFunctionExpression(callee)) {
@@ -257,7 +268,7 @@ function cleanFunctionLocalDeadBindings(ast, topLevelFns) {
     let changed = false;
 
     traverse(ast, {
-        Scope(path) {
+        Scopable(path) {
             if (path.isProgram()) return;
             const scope = path.scope;
             for (const [name, binding] of Object.entries(scope.bindings)) {
@@ -331,6 +342,7 @@ function cleanFunctionLocalDeadBindings(ast, topLevelFns) {
 }
 
 function cleanReachabilityDCE(ast) {
+    let anyChanged = false;
     let changed = true;
     let iterations = 0;
     while (changed && iterations < 20) {
@@ -539,6 +551,7 @@ function cleanReachabilityDCE(ast) {
                 if (!reachableBindings.has(name)) {
                     stmtPath.remove();
                     changed = true;
+                    anyChanged = true;
                 }
             } else if (stmtPath.isVariableDeclaration()) {
                 for (const dPath of stmtPath.get('declarations')) {
@@ -547,12 +560,14 @@ function cleanReachabilityDCE(ast) {
                         if (!reachableBindings.has(name)) {
                             dPath.remove();
                             changed = true;
+                            anyChanged = true;
                         }
                     }
                 }
                 if (!stmtPath.removed && stmtPath.node && stmtPath.node.declarations.length === 0) {
                     stmtPath.remove();
                     changed = true;
+                    anyChanged = true;
                 }
             } else if (stmtPath.isExpressionStatement()) {
                 const expr = stmtPath.node.expression;
@@ -564,10 +579,13 @@ function cleanReachabilityDCE(ast) {
                 ) {
                     stmtPath.remove();
                     changed = true;
+                    anyChanged = true;
                 }
             }
         }
+        if (changed) anyChanged = true;
     }
+    return anyChanged;
 }
 
 function polishAST(ast) {
@@ -663,11 +681,27 @@ function polishAST(ast) {
                 }
             }
         },
+        "ClassMethod|ObjectMethod"(path) {
+            if (path.node.computed && t.isStringLiteral(path.node.key)) {
+                const keyVal = path.node.key.value;
+                if (isValidIdentifier(keyVal)) {
+                    path.node.computed = false;
+                    path.node.key = t.identifier(keyVal);
+                } else {
+                    path.node.computed = false;
+                }
+            }
+        },
         NumericLiteral(path) {
             if (path.node.extra && typeof path.node.extra.raw === 'string') {
                 if (/^0[xXoObB]/.test(path.node.extra.raw)) {
                     delete path.node.extra;
                 }
+            }
+        },
+        StringLiteral(path) {
+            if (path.node.extra) {
+                delete path.node.extra;
             }
         },
         EmptyStatement(path) {
@@ -681,15 +715,39 @@ function polishAST(ast) {
         Function(path) {
             const body = path.node.body;
             if (t.isBlockStatement(body) && body.body.length > 0) {
-                const lastStmt = body.body[body.body.length - 1];
-                if (t.isReturnStatement(lastStmt)) {
-                    const arg = lastStmt.argument;
-                    if (
-                        arg === null ||
-                        (t.isIdentifier(arg, { name: 'undefined' }) && !path.scope.getBinding('undefined')) ||
-                        (t.isUnaryExpression(arg, { operator: 'void' }) && t.isNumericLiteral(arg.argument, { value: 0 }))
-                    ) {
-                        body.body.pop();
+                const paramNames = new Set();
+                for (const param of path.node.params) {
+                    if (t.isIdentifier(param)) {
+                        paramNames.add(param.name);
+                    } else if (t.isAssignmentPattern(param) && t.isIdentifier(param.left)) {
+                        paramNames.add(param.left.name);
+                    } else if (t.isRestElement(param) && t.isIdentifier(param.argument)) {
+                        paramNames.add(param.argument.name);
+                    }
+                }
+                if (paramNames.size > 0) {
+                    body.body = body.body.filter(stmt => {
+                        if (t.isVariableDeclaration(stmt)) {
+                            stmt.declarations = stmt.declarations.filter(
+                                d => !(!d.init && t.isIdentifier(d.id) && paramNames.has(d.id.name))
+                            );
+                            if (stmt.declarations.length === 0) return false;
+                        }
+                        return true;
+                    });
+                }
+
+                if (body.body.length > 0) {
+                    const lastStmt = body.body[body.body.length - 1];
+                    if (t.isReturnStatement(lastStmt)) {
+                        const arg = lastStmt.argument;
+                        if (
+                            arg === null ||
+                            (t.isIdentifier(arg, { name: 'undefined' }) && !path.scope.getBinding('undefined')) ||
+                            (t.isUnaryExpression(arg, { operator: 'void' }) && t.isNumericLiteral(arg.argument, { value: 0 }))
+                        ) {
+                            body.body.pop();
+                        }
                     }
                 }
             }
