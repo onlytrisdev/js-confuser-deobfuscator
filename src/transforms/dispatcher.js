@@ -31,7 +31,7 @@ function unwrapDispatcher(ast) {
                     if (varPath.getFunctionParent() !== path) return;
                     if (t.isObjectExpression(varPath.node.init)) {
                         const props = varPath.node.init.properties;
-                        if (props.length > 0 && props.every(p => t.isFunctionExpression(p.value) || t.isObjectMethod(p))) {
+                        if (props.length > 0 && props.every(p => (t.isObjectProperty(p) && t.isFunctionExpression(p.value)) || (t.isObjectMethod(p) && p.kind === 'method' && !p.computed))) {
                             fnsObject = varPath.node.init;
                         }
                     }
@@ -40,7 +40,7 @@ function unwrapDispatcher(ast) {
                     if (assignPath.getFunctionParent() !== path) return;
                     if (t.isObjectExpression(assignPath.node.right)) {
                         const props = assignPath.node.right.properties;
-                        if (props.length > 0 && props.every(p => t.isFunctionExpression(p.value) || t.isObjectMethod(p))) {
+                        if (props.length > 0 && props.every(p => (t.isObjectProperty(p) && t.isFunctionExpression(p.value)) || (t.isObjectMethod(p) && p.kind === 'method' && !p.computed))) {
                             fnsObject = assignPath.node.right;
                         }
                     }
@@ -77,29 +77,12 @@ function unwrapDispatcher(ast) {
                 }
             });
 
-            if (!fnsObject) return;
-
-            const fnsIds = new Set();
-            const fnsWrapper = t.file(t.program([t.expressionStatement(t.cloneNode(fnsObject))]));
-            traverse(fnsWrapper, {
-                noScope: true,
-                Identifier(ip) {
-                    fnsIds.add(ip.node.name);
-                }
-            });
-
             let hasLocalHelperFns = false;
             path.get('body.body').forEach(s => {
-                if (s.isFunctionDeclaration()) {
-                    const fnId = s.node.id && s.node.id.name;
-                    if (fnId && fnsIds.has(fnId)) {
-                        hasLocalHelperFns = true;
-                    } else {
-                        s.remove();
-                    }
-                }
+                if (s.isFunctionDeclaration()) hasLocalHelperFns = true;
             });
             if (hasLocalHelperFns) return;
+            if (!fnsObject) return;
 
             const functionMap = new Map();
             const usedNames = new Set();
