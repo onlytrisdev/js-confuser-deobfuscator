@@ -100,6 +100,9 @@ function decodeStrings(ast) {
         const nums = new Set();
         traverse(fnNode.body, {
             noScope: true,
+            Function(fp) {
+                fp.skip();
+            },
             NumericLiteral(np) {
                 nums.add(np.node.value);
             }
@@ -147,6 +150,9 @@ function decodeStrings(ast) {
                 const retWrapper = t.file(t.program([s]));
                 traverse(retWrapper, {
                     noScope: true,
+                    Function(fp) {
+                        fp.skip();
+                    },
                     CallExpression(cp) {
                         const callee = cp.node.callee;
                         if (t.isIdentifier(callee) && base91Names && base91Names.has(callee.name)) {

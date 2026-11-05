@@ -146,88 +146,83 @@ function isPureOrRemovableExpr(node, topLevelFns) {
 }
 
 function cleanBlockScopeDeadFunctions(ast) {
-    let changed = true;
-    while (changed) {
-        changed = false;
-        traverse(ast, {
-            BlockStatement(blockPath) {
-                const stmts = blockPath.node.body;
-                const localFns = new Map();
-                stmts.forEach((stmt) => {
-                    if (t.isFunctionDeclaration(stmt) && stmt.id) {
-                        localFns.set(stmt.id.name, stmt);
-                    }
-                });
-
-                if (localFns.size === 0) return;
-
-                const roots = new Set();
-                stmts.forEach(stmt => {
-                    if (!t.isFunctionDeclaration(stmt)) {
-                        traverse(stmt, {
-                            noScope: true,
-                            Identifier(ip) {
-                                if (localFns.has(ip.node.name)) {
-                                    roots.add(ip.node.name);
-                                }
-                            }
-                        });
-                    }
-                });
-
-                const parentFn = blockPath.getFunctionParent();
-                if (parentFn) {
-                    parentFn.traverse({
-                        Identifier(ip) {
-                            if (localFns.has(ip.node.name)) {
-                                let isInsideBlock = false;
-                                let curr = ip.parentPath;
-                                while (curr) {
-                                    if (curr.node === blockPath.node) {
-                                        isInsideBlock = true;
-                                        break;
-                                    }
-                                    curr = curr.parentPath;
-                                }
-                                if (!isInsideBlock) {
-                                    roots.add(ip.node.name);
-                                }
-                            }
-                        }
-                    });
+    let anyRemoved = false;
+    traverse(ast, {
+        BlockStatement(blockPath) {
+            const stmts = blockPath.node.body;
+            const localFns = new Map();
+            const stmtToFnName = new Map();
+            stmts.forEach((stmt) => {
+                if (t.isFunctionDeclaration(stmt) && stmt.id) {
+                    localFns.set(stmt.id.name, stmt);
+                    stmtToFnName.set(stmt, stmt.id.name);
                 }
+            });
 
-                const reachable = new Set(roots);
-                const queue = Array.from(roots);
-                while (queue.length > 0) {
-                    const currName = queue.shift();
-                    const fnStmt = localFns.get(currName);
-                    if (!fnStmt) continue;
-                    traverse(fnStmt, {
-                        noScope: true,
-                        Identifier(ip) {
-                            const name = ip.node.name;
-                            if (localFns.has(name) && !reachable.has(name)) {
-                                reachable.add(name);
-                                queue.push(name);
-                            }
-                        }
-                    });
+            if (localFns.size === 0) return;
+
+            const roots = new Set();
+            const deps = new Map();
+            for (const name of localFns.keys()) {
+                deps.set(name, new Set());
+            }
+
+            for (const [name, fnStmt] of localFns.entries()) {
+                const b = blockPath.scope.getBinding(name);
+                if (!b) {
+                    roots.add(name);
+                    continue;
                 }
-
-                for (const [name] of localFns.entries()) {
-                    if (!reachable.has(name)) {
-                        const paths = blockPath.get('body');
-                        const pToRemove = paths.find(p => p.isFunctionDeclaration() && p.node.id && p.node.id.name === name);
-                        if (pToRemove) {
-                            pToRemove.remove();
-                            changed = true;
+                const allRefs = [...b.referencePaths, ...b.constantViolations];
+                for (const refPath of allRefs) {
+                    let ownerFn = null;
+                    let curr = refPath;
+                    while (curr && curr.node !== blockPath.node) {
+                        if (stmtToFnName.has(curr.node)) {
+                            ownerFn = stmtToFnName.get(curr.node);
+                            break;
+                        }
+                        curr = curr.parentPath;
+                    }
+                    if (ownerFn) {
+                        if (ownerFn !== name) {
+                            deps.get(ownerFn).add(name);
+                        }
+                    } else {
+                        if (refPath.node !== fnStmt.id) {
+                            roots.add(name);
                         }
                     }
                 }
             }
-        });
-    }
+
+            const reachable = new Set(roots);
+            const queue = Array.from(roots);
+            while (queue.length > 0) {
+                const currName = queue.shift();
+                const dSet = deps.get(currName);
+                if (!dSet) continue;
+                for (const dep of dSet) {
+                    if (!reachable.has(dep)) {
+                        reachable.add(dep);
+                        queue.push(dep);
+                    }
+                }
+            }
+
+            for (const [name] of localFns.entries()) {
+                if (!reachable.has(name)) {
+                    const paths = blockPath.get('body');
+                    const pToRemove = paths.find(p => p.isFunctionDeclaration() && p.node.id && p.node.id.name === name);
+                    if (pToRemove) {
+                        pToRemove.remove();
+                        anyRemoved = true;
+                    }
+                }
+            }
+        }
+    });
+    return anyRemoved;
 }
 
 function cleanUnusedDecoders(ast) {
@@ -260,11 +255,6 @@ function cleanUnusedDecoders(ast) {
 
 function cleanFunctionLocalDeadBindings(ast, topLevelFns) {
     let changed = false;
-    traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        }
-    });
 
     traverse(ast, {
         Scope(path) {
@@ -347,10 +337,6 @@ function cleanReachabilityDCE(ast) {
         changed = false;
         iterations++;
 
-        cleanBlockScopeDeadFunctions(ast);
-        if (cleanUnusedDecoders(ast)) changed = true;
-        cleanBlockScopeDeadFunctions(ast);
-
         let programPath;
         let programScope;
         traverse(ast, {
@@ -361,6 +347,10 @@ function cleanReachabilityDCE(ast) {
             }
         });
 
+        let subChanged = false;
+        if (cleanBlockScopeDeadFunctions(ast)) subChanged = true;
+        if (cleanUnusedDecoders(ast)) subChanged = true;
+
         const topLevelFns = new Map();
         for (const stmt of ast.program.body) {
             if (t.isFunctionDeclaration(stmt) && stmt.id && t.isIdentifier(stmt.id)) {
@@ -368,7 +358,9 @@ function cleanReachabilityDCE(ast) {
             }
         }
 
-        if (cleanFunctionLocalDeadBindings(ast, topLevelFns)) {
+        if (cleanFunctionLocalDeadBindings(ast, topLevelFns)) subChanged = true;
+
+        if (subChanged) {
             changed = true;
             programScope.crawl();
         }
