@@ -1,17 +1,48 @@
 const traverse = require('@babel/traverse').default;
 const generator = require('@babel/generator').default;
 const t = require('@babel/types');
-const vm = require('vm');
 const { numericToAST, evaluateCustom } = require('../utils/ast-utils');
+
+let nodeVm = null;
+try {
+    nodeVm = require('vm');
+} catch (e) {}
+
+function createSandbox(seed) {
+    if (nodeVm && typeof nodeVm.createContext === 'function' && typeof nodeVm.runInContext === 'function') {
+        const ctx = nodeVm.createContext(seed);
+        ctx.global = ctx;
+        ctx.globalThis = ctx;
+        ctx.window = ctx;
+        return {
+            ctx,
+            run(code, timeout) {
+                return nodeVm.runInContext(code, ctx, { timeout });
+            }
+        };
+    }
+    const ctx = Object.assign(Object.create(null), seed);
+    ctx.global = ctx;
+    ctx.globalThis = ctx;
+    ctx.window = ctx;
+    const runner = new Function('__ctx', '__code', 'with (__ctx) { return eval(__code); }');
+    return {
+        ctx,
+        run(code) {
+            return runner(ctx, code);
+        }
+    };
+}
 
 function decodeStrings(ast) {
     let changed = false;
 
     const fakeConsole = { log: () => {}, warn: () => {}, error: () => {}, info: () => {}, debug: () => {} };
-    const ctx = vm.createContext({
+    const hasFullBuffer = typeof Buffer !== 'undefined' && typeof Buffer.from === 'function';
+    const sandbox = createSandbox({
         TextDecoder: typeof TextDecoder !== 'undefined' ? TextDecoder : undefined,
         TextEncoder: typeof TextEncoder !== 'undefined' ? TextEncoder : undefined,
-        Buffer: typeof Buffer !== 'undefined' ? Buffer : undefined,
+        Buffer: hasFullBuffer ? Buffer : undefined,
         String,
         Array,
         Object,
@@ -22,21 +53,20 @@ function decodeStrings(ast) {
         window: null,
         console: fakeConsole
     });
-    ctx.global = ctx;
-    ctx.globalThis = ctx;
-    ctx.window = ctx;
+    const ctx = sandbox.ctx;
 
-    const globalLookup = new Map([
+    const lookupEntries = [
         [fakeConsole, t.identifier('console')],
         [String, t.identifier('String')],
         [Array, t.identifier('Array')],
         [Object, t.identifier('Object')],
         [Math, t.identifier('Math')],
-        [Uint8Array, t.identifier('Uint8Array')],
-        [TextDecoder, t.identifier('TextDecoder')],
-        [TextEncoder, t.identifier('TextEncoder')],
-        [Buffer, t.identifier('Buffer')]
-    ]);
+        [Uint8Array, t.identifier('Uint8Array')]
+    ];
+    if (typeof TextDecoder !== 'undefined') lookupEntries.push([TextDecoder, t.identifier('TextDecoder')]);
+    if (typeof TextEncoder !== 'undefined') lookupEntries.push([TextEncoder, t.identifier('TextEncoder')]);
+    if (hasFullBuffer) lookupEntries.push([Buffer, t.identifier('Buffer')]);
+    const globalLookup = new Map(lookupEntries);
 
     function convertToAST(res) {
         if (typeof res === 'string') return t.stringLiteral(res);
@@ -234,8 +264,28 @@ function decodeStrings(ast) {
     }
 
     for (const stmt of declStmts) {
+        if (t.isFunctionDeclaration(stmt) && stmt.id) {
+            if (!(stmt.id.name in ctx)) ctx[stmt.id.name] = undefined;
+        } else if (t.isVariableDeclaration(stmt)) {
+            const ids = t.getBindingIdentifiers(stmt);
+            for (const name of Object.keys(ids)) {
+                if (!(name in ctx)) ctx[name] = undefined;
+            }
+        }
+    }
+
+    for (const stmt of declStmts) {
         try {
-            vm.runInContext(generator(stmt).code, ctx, { timeout: 500 });
+            if (t.isFunctionDeclaration(stmt) && stmt.id) {
+                const fnExpr = t.functionExpression(stmt.id, stmt.params, stmt.body, stmt.generator, stmt.async);
+                const assign = t.expressionStatement(t.assignmentExpression('=', t.identifier(stmt.id.name), fnExpr));
+                sandbox.run(generator(assign).code, 500);
+            } else if (t.isVariableDeclaration(stmt) && stmt.kind !== 'var') {
+                const varStmt = t.variableDeclaration('var', stmt.declarations);
+                sandbox.run(generator(varStmt).code, 500);
+            } else {
+                sandbox.run(generator(stmt).code, 500);
+            }
         } catch (e) {}
     }
 
@@ -248,7 +298,12 @@ function decodeStrings(ast) {
     for (const stmt of boilerplateStmts) {
         if (t.isFunctionDeclaration(stmt)) continue;
         try {
-            vm.runInContext(generator(stmt).code, ctx, { timeout: 500 });
+            if (t.isVariableDeclaration(stmt) && stmt.kind !== 'var') {
+                const varStmt = t.variableDeclaration('var', stmt.declarations);
+                sandbox.run(generator(varStmt).code, 500);
+            } else {
+                sandbox.run(generator(stmt).code, 500);
+            }
         } catch (e) {}
     }
 
@@ -358,7 +413,7 @@ function decodeStrings(ast) {
                 if (binding) {
                     try {
                         const iife = `(function() {\n${fnDeclsOnly}\n${codeToRun}\nreturn ${fnName};\n})()`;
-                        const localFn = vm.runInContext(iife, ctx, { timeout: 500 });
+                        const localFn = sandbox.run(iife, 500);
                         if (typeof localFn === 'function') {
                             bindingToFn.set(binding, localFn);
                         }
@@ -412,7 +467,7 @@ function decodeStrings(ast) {
             try {
                 ctx.__currDecoder = decoder;
                 ctx.__currArgs = args;
-                const res = vm.runInContext('__currDecoder(...__currArgs)', ctx, { timeout: 200 });
+                const res = sandbox.run('__currDecoder(...__currArgs)', 200);
                 const astNode = convertToAST(res);
                 if (astNode) {
                     path.replaceWith(astNode);
