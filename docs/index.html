@@ -8,17 +8,20 @@
 </head>
 <body>
     <header class="navbar">
-        <div class="nav-left">
-            <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="brand-link">
-                <span class="brand-logo" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="16 18 22 12 16 6"></polyline>
-                        <polyline points="8 6 2 12 8 18"></polyline>
-                    </svg>
-                </span>
-                <span class="brand-name">js-confuser-deobfuscator</span>
-            </a>
-            <span class="version-pill">14 AST Passes</span>
+        <div class="nav-top">
+            <div class="nav-brand">
+                <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="brand-link">
+                    <span class="brand-logo" aria-hidden="true">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="16 18 22 12 16 6"></polyline>
+                            <polyline points="8 6 2 12 8 18"></polyline>
+                        </svg>
+                    </span>
+                    <span class="brand-name">js-confuser-deobfuscator</span>
+                </a>
+                <span class="version-pill">14 AST Passes</span>
+            </div>
+
             <nav class="nav-links" aria-label="GitHub links">
                 <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="nav-item">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -32,31 +35,28 @@
                 <a href="https://github.com/onlytrisdev" target="_blank" rel="noopener noreferrer" class="nav-item">
                     <span>@onlytrisdev</span>
                 </a>
+                <button id="themeToggle" class="control-btn theme-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Switch Theme">
+                    <svg id="themeIconDark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="4"></circle>
+                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                    </svg>
+                    <svg id="themeIconLight" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <span id="themeLabel">Light</span>
+                </button>
             </nav>
         </div>
 
-        <div class="nav-right">
-            <div class="select-wrap">
-                <select id="sampleSelect" class="control-select" aria-label="Select obfuscated sample">
-                    <option value="custom" hidden>Custom Script (Auto-detect)</option>
-                    <option value="dispatcher-masking" selected>Preset: Dispatcher + Flatten + Masking</option>
-                    <option value="preset-low">Preset: Low</option>
-                    <option value="preset-medium">Preset: Medium</option>
-                    <option value="cff-calculator">Preset: CFF + Calculator + Dead Code</option>
-                    <option value="preset-high">Preset: High (All 14 Layers)</option>
-                </select>
-            </div>
-
-            <button id="themeToggle" class="control-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Switch Theme">
-                <svg id="themeIconDark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="4"></circle>
-                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
-                </svg>
-                <svg id="themeIconLight" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
-                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-                </svg>
-                <span id="themeLabel">Light</span>
-            </button>
+        <div class="nav-controls">
+            <select id="sampleSelect" class="control-select" aria-label="Select obfuscated sample">
+                <option value="custom" hidden>Custom Script (Auto-detect)</option>
+                <option value="dispatcher-masking" selected>Preset: Dispatcher + Flatten + Masking</option>
+                <option value="preset-low">Preset: Low</option>
+                <option value="preset-medium">Preset: Medium</option>
+                <option value="cff-calculator">Preset: CFF + Calculator + Dead Code</option>
+                <option value="preset-high">Preset: High (All 14 Layers)</option>
+            </select>
 
             <button id="runBtn" class="primary-btn" type="button">
                 <span>Deobfuscate</span>
@@ -73,8 +73,8 @@
 
     <div class="workbench">
         <section class="telemetry-card" aria-label="Deobfuscation task telemetry">
-            <div class="telemetry-bar">
-                <div class="telemetry-left">
+            <div class="telemetry-row-top">
+                <div class="telemetry-status-group">
                     <button id="workedToggle" class="worked-trigger" type="button">
                         <span id="statusDot" class="status-dot"></span>
                         <span id="workedText" class="worked-title">Worked for 0.0s</span>
@@ -105,23 +105,24 @@
                     </div>
                 </div>
 
-                <div class="telemetry-right">
-                    <div class="summary-left" id="summaryTrigger">
-                        <span id="summaryMainText" class="summary-main">0 transforms applied</span>
-                        <span id="summaryAdded" class="diff-add">+0 B</span>
-                        <span id="summaryRemoved" class="diff-del">-0 B</span>
-                        <span id="summaryPercent" class="summary-pct">(0%)</span>
-                    </div>
-                    <button id="expandStepsBtn" class="ghost-xs-btn" type="button">
-                        <span id="expandStepsLabel">Steps</span>
-                        <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M6 9l6 6 6-6"></path>
-                        </svg>
-                    </button>
-                </div>
+                <button id="expandStepsBtn" class="ghost-xs-btn" type="button">
+                    <span id="expandStepsLabel">0 steps</span>
+                    <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M6 9l6 6 6-6"></path>
+                    </svg>
+                </button>
             </div>
 
             <div id="taskList" class="task-drawer"></div>
+
+            <div class="telemetry-row-bottom" id="summaryTrigger">
+                <span id="summaryMainText" class="summary-main">0 transforms applied</span>
+                <div class="summary-metrics">
+                    <span id="summaryAdded" class="diff-add">+0 B</span>
+                    <span id="summaryRemoved" class="diff-del">-0 B</span>
+                    <span id="summaryPercent" class="summary-pct">(0%)</span>
+                </div>
+            </div>
         </section>
 
         <main class="workspace">
@@ -199,7 +200,7 @@
 
     <footer class="footer">
         <div class="footer-left">
-            <span>Browser Web Worker AST Engine · Zero server uploads · 100% client-side execution</span>
+            <span>Browser Web Worker AST Engine · 100% client-side execution</span>
         </div>
         <div class="footer-right">
             <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="footer-link">Repository</a>
