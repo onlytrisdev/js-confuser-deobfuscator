@@ -38,6 +38,12 @@ flowchart TD
 js-confuser-deobfuscator/
 ├── deobfuscator.js                  # Main CLI and programmatic entry point
 ├── package.json                     # Dependencies (@babel/*, js-beautify, js-confuser)
+├── features/
+│   ├── README.md                    # Feature map index
+│   └── deobfuscation-pipeline.md    # Pipeline architecture & invariants
+├── .agents/
+│   └── skills/
+│       └── verify-deobfuscator/     # Project-local end-to-end verification skill
 ├── src/
 │   ├── core/
 │   │   └── dce.js                   # Graph reachability Mark-and-Sweep DCE & polishAST
@@ -58,6 +64,7 @@ js-confuser-deobfuscator/
 │   └── utils/
 │       └── ast-utils.js             # Constant expression evaluator & safeGlobals
 └── test/
+    ├── adversarial-repros.test.js   # 15-case adversarial regression & edge-case suite
     ├── clarity-benchmark.js         # Deterministic 32-case AST clarity & execution benchmark
     └── comprehensive-test.js        # Live JS-Confuser end-to-end verification suite
 ```
@@ -72,14 +79,16 @@ node deobfuscator.js <input_file.js> <output_file.js>
 
 ### Run Verification Suites
 
-Run the deterministic 32-case AST clarity and semantic equivalence benchmark:
+Run all verification suites via `npm test`:
 
 ```bash
-node test/clarity-benchmark.js
+npm test
 ```
 
-Run the live `js-confuser` end-to-end test suite across all 4 test programs and 8 obfuscation configurations:
+Or run individual suites:
 
 ```bash
+node test/adversarial-repros.test.js
+node test/clarity-benchmark.js
 node test/comprehensive-test.js
 ```

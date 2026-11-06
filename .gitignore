@@ -11,3 +11,8 @@ yarn-error.log*
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Audit & Temp Test Artifacts
+.audit/
+test/temp_run/
+test/tmp_adversarial/
