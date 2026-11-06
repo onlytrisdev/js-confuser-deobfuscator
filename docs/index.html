@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>js-confuser-deobfuscator</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span id="brandDot" class="brand-dot"></span>
+            <h1 class="brand-title">js-confuser-deobfuscator</h1>
+            <span class="brand-tag">AST Engine · 14 Transforms</span>
+        </div>
+        <div class="toolbar">
+            <select id="sampleSelect" class="select-input" aria-label="Load sample preset">
+                <option value="dispatcher-masking">Sample: Dispatcher + Flatten + Masking</option>
+                <option value="preset-low">Sample: Preset Low</option>
+                <option value="preset-medium">Sample: Preset Medium</option>
+                <option value="cff-calculator">Sample: CFF + Calculator + Dead Code</option>
+                <option value="preset-high">Sample: Preset High (All 14 Layers)</option>
+            </select>
+            <label for="fileInput" class="btn btn-ghost">Upload .js</label>
+            <input id="fileInput" type="file" accept=".js,.mjs,.cjs,.txt" hidden>
+            <button id="clearBtn" class="btn btn-ghost" type="button">Clear</button>
+            <button id="runBtn" class="btn btn-primary" type="button">Deobfuscate</button>
+            <button id="cancelBtn" class="btn btn-danger" type="button" hidden>Cancel</button>
+        </div>
+    </header>
+
+    <section class="pipeline-strip" aria-label="Live deobfuscation pipeline progress">
+        <div class="pipeline-header">
+            <div class="pipeline-status">
+                <span id="statusBadge" class="badge badge-idle">IDLE</span>
+                <span id="liveStepTitle" class="live-step-title">Ready (Ctrl+Enter to run)</span>
+                <div id="passHistory" class="pass-history"></div>
+            </div>
+            <div class="pipeline-counters">
+                <span id="liveStepCounter" class="live-counter">0 / 14 steps</span>
+                <span id="liveTimer" class="live-timer">0 ms</span>
+            </div>
+        </div>
+        <div class="progress-track">
+            <div id="progressBar" class="progress-fill"></div>
+        </div>
+        <div id="stepGrid" class="step-grid"></div>
+    </section>
+
+    <main class="workspace">
+        <section class="pane">
+            <div class="pane-header">
+                <span class="pane-title">INPUT · OBFUSCATED</span>
+                <span id="inputMeta" class="pane-meta">0 B · 0 lines</span>
+            </div>
+            <textarea
+                id="inputEditor"
+                class="code-editor"
+                spellcheck="false"
+                autocapitalize="off"
+                autocomplete="off"
+                placeholder="Paste js-confuser obfuscated JavaScript here..."
+            ></textarea>
+        </section>
+
+        <section class="pane">
+            <div class="pane-header">
+                <span class="pane-title">OUTPUT · DEOBFUSCATED</span>
+                <div class="pane-actions">
+                    <span id="outputMeta" class="pane-meta">0 B · 0 lines</span>
+                    <button id="copyBtn" class="btn btn-xs" type="button">Copy</button>
+                    <button id="downloadBtn" class="btn btn-xs" type="button">Download</button>
+                </div>
+            </div>
+            <textarea
+                id="outputEditor"
+                class="code-editor"
+                spellcheck="false"
+                readonly
+                placeholder="Clean deobfuscated JavaScript will appear here..."
+            ></textarea>
+        </section>
+    </main>
+
+    <footer class="statusbar">
+        <div class="status-left">
+            <span id="statusText" class="status-message">Web Worker AST Pipeline Ready</span>
+        </div>
+        <div class="status-right">
+            <span id="metricPasses" class="metric">Passes: -</span>
+            <span id="metricTime" class="metric">Time: -</span>
+            <span id="metricReduction" class="metric">Reduction: -</span>
+        </div>
+    </footer>
+
+    <script src="./deobfuscator.bundle.js"></script>
+    <script src="./samples.js"></script>
+    <script src="./app.js"></script>
+</body>
+</html>

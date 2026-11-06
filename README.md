@@ -71,7 +71,19 @@ js-confuser-deobfuscator/
 
 ## Usage
 
-### Deobfuscate a File
+### Web Interface (GitHub Pages)
+
+Open the live browser deobfuscator at `https://onlytrisdev.github.io/js-confuser-deobfuscator/`.
+
+The web app runs the full 14-transform Babel AST pipeline inside a dedicated Web Worker (`docs/deobfuscator.bundle.js`) and streams real-time step-by-step execution telemetry, per-transform hit counts, millisecond durations, and intermediate pass snapshots.
+
+To rebuild the browser bundle locally:
+
+```bash
+npm run build:web
+```
+
+### Deobfuscate a File (CLI)
 
 ```bash
 node deobfuscator.js <input_file.js> <output_file.js>
@@ -92,3 +104,4 @@ node test/adversarial-repros.test.js
 node test/clarity-benchmark.js
 node test/comprehensive-test.js
 ```
+
