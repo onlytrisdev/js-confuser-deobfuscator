@@ -1,5 +1,6 @@
 const fs = require('fs');
 const parser = require('@babel/parser');
+const traverse = require('@babel/traverse').default;
 const generator = require('@babel/generator').default;
 const beautify = require('js-beautify').js;
 const { unpack } = require('./src/transforms/unpack');
@@ -16,6 +17,14 @@ const { unwrapRgf } = require('./src/transforms/rgf');
 const { simplifyMovedDeclarations } = require('./src/transforms/moved-declarations');
 const { unwrapCFF } = require('./src/transforms/cff');
 const { cleanReachabilityDCE, polishAST } = require('./src/core/dce');
+
+function runStep(fn, ast) {
+    const res = fn(ast);
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
+    return res;
+}
 
 function deobfuscate(inputPath, outputPath) {
     console.log(`[+] Reading input file: ${inputPath}`);
@@ -37,25 +46,25 @@ function deobfuscate(inputPath, outputPath) {
         changed = false;
         pass++;
         console.log(`[*] Transform Pass ${pass}...`);
-        if (simplifyMovedDeclarations(ast)) changed = true;
-        if (inlineConstantArrays(ast)) changed = true;
-        if (decodeStrings(ast)) changed = true;
-        if (unwrapAstScrambler(ast)) changed = true;
-        if (unwrapRgf(ast)) changed = true;
-        if (inlineGlobalConcealing(ast)) changed = true;
-        if (inlineCalculator(ast)) changed = true;
-        if (simplifyOpaquePredicates(ast)) changed = true;
-        if (unwrapDispatcher(ast)) changed = true;
-        if (unwrapFlatten(ast)) changed = true;
-        if (unwrapCFF(ast)) changed = true;
-        if (unmaskVariables(ast)) changed = true;
-        polishAST(ast);
-        if (cleanReachabilityDCE(ast)) changed = true;
+        if (runStep(simplifyMovedDeclarations, ast)) changed = true;
+        if (runStep(inlineConstantArrays, ast)) changed = true;
+        if (runStep(decodeStrings, ast)) changed = true;
+        if (runStep(unwrapAstScrambler, ast)) changed = true;
+        if (runStep(unwrapRgf, ast)) changed = true;
+        if (runStep(inlineGlobalConcealing, ast)) changed = true;
+        if (runStep(inlineCalculator, ast)) changed = true;
+        if (runStep(simplifyOpaquePredicates, ast)) changed = true;
+        if (runStep(unwrapDispatcher, ast)) changed = true;
+        if (runStep(unwrapFlatten, ast)) changed = true;
+        if (runStep(unwrapCFF, ast)) changed = true;
+        if (runStep(unmaskVariables, ast)) changed = true;
+        runStep(polishAST, ast);
+        if (runStep(cleanReachabilityDCE, ast)) changed = true;
     }
 
     console.log('[+] Step 4: Running Scope-Aware Reachability DCE...');
-    polishAST(ast);
-    cleanReachabilityDCE(ast);
+    runStep(polishAST, ast);
+    runStep(cleanReachabilityDCE, ast);
 
     console.log('[+] Step 5: Polishing AST syntax and literals...');
     polishAST(ast);

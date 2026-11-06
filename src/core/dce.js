@@ -236,33 +236,6 @@ function cleanBlockScopeDeadFunctions(ast) {
     return anyRemoved;
 }
 
-function cleanUnusedDecoders(ast) {
-    let changed = false;
-    traverse(ast, {
-        IfStatement(path) {
-            if (t.isUnaryExpression(path.node.test) && path.node.test.operator === '!' && t.isIdentifier(path.node.test.argument)) {
-                const varName = path.node.test.argument.name;
-                const fnParent = path.getFunctionParent();
-                if (fnParent) {
-                    let isUsed = false;
-                    fnParent.traverse({
-                        CallExpression(cp) {
-                            if (t.isIdentifier(cp.node.callee, { name: varName })) {
-                                isUsed = true;
-                                cp.stop();
-                            }
-                        }
-                    });
-                    if (!isUsed) {
-                        path.remove();
-                        changed = true;
-                    }
-                }
-            }
-        }
-    });
-    return changed;
-}
 
 function cleanFunctionLocalDeadBindings(ast, topLevelFns) {
     let changed = false;
@@ -349,11 +322,13 @@ function cleanReachabilityDCE(ast) {
         changed = false;
         iterations++;
 
+        if (traverse.cache && typeof traverse.cache.clear === 'function') {
+            traverse.cache.clear();
+        }
         let programPath;
         let programScope;
         traverse(ast, {
             Program(p) {
-                p.scope.crawl();
                 programPath = p;
                 programScope = p.scope;
             }
@@ -361,7 +336,6 @@ function cleanReachabilityDCE(ast) {
 
         let subChanged = false;
         if (cleanBlockScopeDeadFunctions(ast)) subChanged = true;
-        if (cleanUnusedDecoders(ast)) subChanged = true;
 
         const topLevelFns = new Map();
         for (const stmt of ast.program.body) {
@@ -593,6 +567,7 @@ function polishAST(ast) {
     while (seqChanged) {
         seqChanged = false;
         traverse(ast, {
+            noScope: true,
             ExpressionStatement(path) {
                 if (t.isSequenceExpression(path.node.expression)) {
                     path.replaceWithMultiple(
@@ -618,10 +593,10 @@ function polishAST(ast) {
         });
     }
 
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
     traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        },
         UnaryExpression(path) {
             const { operator, argument } = path.node;
             if (operator === '!' && t.isNumericLiteral(argument)) {

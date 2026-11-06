@@ -13,6 +13,25 @@ const RESERVED_WORDS = new Set([
     'interface', 'private', 'public', 'null', 'true', 'false'
 ]);
 
+let cffUidCounter = 0;
+
+function containsIdentifierNamed(node, targetName, ignoreNode = null) {
+    if (!node || typeof node !== 'object' || node === ignoreNode) return false;
+    if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) {
+            if (containsIdentifierNamed(node[i], targetName, ignoreNode)) return true;
+        }
+        return false;
+    }
+    if (node.type === 'Identifier' && node.name === targetName) return true;
+    const keys = t.VISITOR_KEYS[node.type];
+    if (!keys) return false;
+    for (let i = 0; i < keys.length; i++) {
+        if (containsIdentifierNamed(node[keys[i]], targetName, ignoreNode)) return true;
+    }
+    return false;
+}
+
 function isValidVarName(name) {
     return typeof name === 'string' && VALID_ID_RE.test(name) && !RESERVED_WORDS.has(name);
 }
@@ -225,11 +244,9 @@ function simplifyStatesInNode(node, states, statesVar, xorFnMap, stringsMap) {
 
 function unboxCFFScopes(ast) {
     let changed = false;
-    traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        }
-    });
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
 
     const candidateBindings = new Map();
     traverse(ast, {
@@ -460,11 +477,9 @@ function unboxCFFScopes(ast) {
 
 function restoreCFFParamsAndFunctions(ast) {
     let changed = false;
-    traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        }
-    });
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
 
     traverse(ast, {
         Function(p) {
@@ -559,11 +574,9 @@ function restoreCFFParamsAndFunctions(ast) {
         }
     });
 
-    traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        }
-    });
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
 
     traverse(ast, {
         ExpressionStatement(p) {
@@ -647,29 +660,58 @@ function restoreCFFParamsAndFunctions(ast) {
 }
 
 function hasTopLevelReturn(stmts) {
-    const dummyProg = t.program(stmts.map(s => t.cloneNode(s)));
-    let found = false;
-    traverse(dummyProg, {
-        noScope: true,
-        Function(p) {
-            p.skip();
-        },
-        ReturnStatement(p) {
-            found = true;
-            p.stop();
+    function walk(node) {
+        if (!node || typeof node !== 'object') return false;
+        if (t.isFunction(node)) return false;
+        if (t.isReturnStatement(node)) return true;
+        if (Array.isArray(node)) return node.some(walk);
+        const keys = t.VISITOR_KEYS[node.type];
+        if (!keys) return false;
+        for (const k of keys) {
+            if (walk(node[k])) return true;
         }
-    });
-    return found;
+        return false;
+    }
+    return walk(stmts);
+}
+
+function containsStatesMutation(node, statesVarNode) {
+    function walk(n) {
+        if (!n || typeof n !== 'object') return false;
+        if (t.isFunction(n)) return false;
+        if (t.isAssignmentExpression(n) && t.isMemberExpression(n.left) && isStatesObject(n.left.object, statesVarNode)) {
+            return true;
+        }
+        if (t.isUpdateExpression(n) && t.isMemberExpression(n.argument) && isStatesObject(n.argument.object, statesVarNode)) {
+            return true;
+        }
+        if (Array.isArray(n)) return n.some(walk);
+        const keys = t.VISITOR_KEYS[n.type];
+        if (!keys) return false;
+        for (const k of keys) {
+            if (walk(n[k])) return true;
+        }
+        return false;
+    }
+    return walk(node);
+}
+
+function stmtAlwaysTerminates(stmt) {
+    if (!stmt) return false;
+    if (t.isReturnStatement(stmt) || t.isThrowStatement(stmt)) return true;
+    if (t.isBlockStatement(stmt)) return stmt.body.some(stmtAlwaysTerminates);
+    if (t.isIfStatement(stmt)) {
+        return Boolean(stmt.alternate) && stmtAlwaysTerminates(stmt.consequent) && stmtAlwaysTerminates(stmt.alternate);
+    }
+    return false;
 }
 
 function unwrapCFF(ast) {
     let changed = false;
 
-    traverse(ast, {
-        Program(p) {
-            p.scope.crawl();
-        }
-    });
+    if (traverse.cache && typeof traverse.cache.clear === 'function') {
+        traverse.cache.clear();
+    }
 
     const sequences = new Map();
     const sliceFunctions = new Map();
@@ -785,6 +827,9 @@ function unwrapCFF(ast) {
 
         for (let level = 0; level < 8; level++) {
             let levelChanged = false;
+            if (traverse.cache && typeof traverse.cache.clear === 'function') {
+                traverse.cache.clear();
+            }
             const rawWhileCandidates = [];
             const rawWhileNodes = new Set();
 
@@ -966,12 +1011,13 @@ function unwrapCFF(ast) {
                                 applyStateAssignments(st, s.consequent.body || [s.consequent]);
                                 break;
                             } else {
-                                const consStmts = t.isBlockStatement(s.consequent) ? s.consequent.body : [s.consequent];
-                                const isGuardReturn = !s.alternate && consStmts.some(x => t.isReturnStatement(x) || t.isThrowStatement(x));
-                                if (isGuardReturn) {
-                                    const clonedGuard = t.cloneNode(s);
-                                    simplifyStatesInNode(clonedGuard, st, statesVarNode, xorFunctions, stringsMap);
-                                    emitted.push(clonedGuard);
+                                if (!containsStatesMutation(s, statesVarNode)) {
+                                    const clonedIf = t.cloneNode(s);
+                                    simplifyStatesInNode(clonedIf, st, statesVarNode, xorFunctions, stringsMap);
+                                    emitted.push(clonedIf);
+                                    if (stmtAlwaysTerminates(s)) {
+                                        return emitted;
+                                    }
                                     continue;
                                 }
                                 ifStmt = s;
@@ -1023,29 +1069,69 @@ function unwrapCFF(ast) {
                         }
                         const targetSum2 = st2.reduce((a, b) => a + b, 0);
 
-                        function getPathSums(startSt) {
-                            const sums = [];
-                            const curr = [...startSt];
-                            for (let i = 0; i < 40; i++) {
+                        function getReachableStates(startSt) {
+                            const visited = new Map();
+                            const queue = [[...startSt]];
+                            let steps = 0;
+                            while (queue.length > 0 && steps < 64) {
+                                const curr = queue.shift();
                                 const s = curr.reduce((a, b) => a + b, 0);
-                                sums.push(s);
-                                if (s === endState) break;
+                                if (visited.has(s)) continue;
+                                visited.set(s, curr);
+                                steps++;
+                                if (s === endState || (stopAtSum !== null && s === stopAtSum)) continue;
                                 const b = findBlock(curr);
-                                if (!b) break;
-                                if (b.statements.some(x => t.isReturnStatement(x) || t.isThrowStatement(x))) break;
-                                if (b.statements.some(x => t.isIfStatement(x) && evaluateExpr(x.test, curr, statesVarNode, sequences) === null)) break;
-                                applyStateAssignments(curr, b.statements);
+                                if (!b) continue;
+                                if (b.statements.some(x => t.isReturnStatement(x) || t.isThrowStatement(x))) continue;
+                                let branched = false;
+                                for (let si = 0; si < b.statements.length; si++) {
+                                    const x = b.statements[si];
+                                    if (t.isIfStatement(x)) {
+                                        const ev = evaluateExpr(x.test, curr, statesVarNode, sequences);
+                                        if (ev === null) {
+                                            if (!containsStatesMutation(x, statesVarNode)) {
+                                                if (stmtAlwaysTerminates(x)) {
+                                                    branched = true;
+                                                    break;
+                                                }
+                                                continue;
+                                            }
+                                            const next1 = [...curr];
+                                            applyStateAssignments(next1, x.consequent.body || [x.consequent]);
+                                            queue.push(next1);
+                                            const next2 = [...curr];
+                                            if (x.alternate) {
+                                                applyStateAssignments(next2, x.alternate.body || [x.alternate]);
+                                            } else {
+                                                const trailing = b.statements.slice(si + 1);
+                                                if (trailing.length > 0) applyStateAssignments(next2, trailing);
+                                            }
+                                            queue.push(next2);
+                                            branched = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!branched) {
+                                    const next = [...curr];
+                                    applyStateAssignments(next, b.statements);
+                                    queue.push(next);
+                                }
                             }
-                            return sums;
+                            return visited;
                         }
 
-                        const path1Sums = getPathSums(st1);
-                        const path2Sums = getPathSums(st2);
+                        const path1Map = getReachableStates(st1);
+                        const path2Map = getReachableStates(st2);
                         let joinSum = null;
-                        for (const s of path1Sums) {
-                            if (path2Sums.includes(s) && s !== targetSum1 && s !== targetSum2) {
-                                joinSum = s;
-                                break;
+                        let joinSt = null;
+                        if (targetSum1 !== targetSum2) {
+                            for (const [s, stateArr] of path1Map.entries()) {
+                                if (path2Map.has(s)) {
+                                    joinSum = s;
+                                    joinSt = s === targetSum2 ? path2Map.get(s) : stateArr;
+                                    break;
+                                }
                             }
                         }
 
@@ -1061,13 +1147,8 @@ function unwrapCFF(ast) {
                             branch2Stmts.length > 0 ? t.blockStatement(branch2Stmts) : null
                         ));
 
-                        if (joinSum !== null && joinSum !== endState) {
-                            const joinSt = [...st1];
-                            while (joinSt.reduce((a, b) => a + b, 0) !== joinSum) {
-                                const b = findBlock(joinSt);
-                                applyStateAssignments(joinSt, b.statements);
-                            }
-                            const afterStmts = traceFlow(joinSt, depth + 1, stopAtSum, nextVisited);
+                        if (joinSum !== null && joinSum !== endState && joinSum !== stopAtSum) {
+                            const afterStmts = traceFlow([...joinSt], depth + 1, stopAtSum, nextVisited);
                             emitted.push(...afterStmts);
                         }
                         return emitted;
@@ -1084,19 +1165,27 @@ function unwrapCFF(ast) {
 
                 try {
                     for (let wave = 0; wave < 15; wave++) {
-                        enclosingFn.parentPath.scope.crawl();
-                        const binding = enclosingFn.parentPath.scope.getBinding(mainFnName);
-                        if (!binding) break;
-
-                        const externalCalls = binding.referencePaths
-                            .filter(r => r.parentPath && r.parentPath.isCallExpression() && r.parentPath.node.callee === r.node && !r.findParent(p => p === enclosingFn))
-                            .map(r => r.parentPath);
+                        const externalCalls = [];
+                        traverse(ast, {
+                            noScope: true,
+                            Function(fp) {
+                                if (fp.node === enclosingFn.node) {
+                                    fp.skip();
+                                }
+                            },
+                            CallExpression(cp) {
+                                if (t.isIdentifier(cp.node.callee, { name: mainFnName })) {
+                                    externalCalls.push(cp);
+                                }
+                            }
+                        });
 
                         if (externalCalls.length === 0) {
                             break;
                         }
 
                         const replacements = [];
+                        let hasMoreWaves = false;
 
                         for (const callPath of externalCalls) {
                             const arg0 = callPath.node.arguments[0];
@@ -1114,14 +1203,13 @@ function unwrapCFF(ast) {
                                     let initVal = null;
                                     if (pi < callPath.node.arguments.length) {
                                         initVal = callPath.node.arguments[pi];
-                                        if (t.isIdentifier(initVal) && !callPath.scope.hasBinding(initVal.name)) {
-                                            initVal = t.unaryExpression('void', t.numericLiteral(0));
-                                        }
                                     } else if (t.isAssignmentPattern(param)) {
                                         initVal = param.right;
+                                    } else {
+                                        initVal = t.unaryExpression('void', t.numericLiteral(0));
                                     }
                                     if (initVal && t.isIdentifier(paramId)) {
-                                        const localId = callPath.scope.generateUidIdentifier(paramId.name);
+                                        const localId = t.identifier(`_cff_${paramId.name}_${++cffUidCounter}`);
                                         paramMap.set(paramId.name, localId);
                                         prepends.push(t.variableDeclaration('var', [
                                             t.variableDeclarator(localId, t.cloneNode(initVal))
@@ -1147,9 +1235,14 @@ function unwrapCFF(ast) {
                                     });
                                 }
 
+                                const fullReconstructed = [...prepends, ...reconstructed];
+                                if (containsIdentifierNamed(fullReconstructed, mainFnName)) {
+                                    hasMoreWaves = true;
+                                }
+
                                 replacements.push({
                                     callPath,
-                                    reconstructed: [...prepends, ...reconstructed]
+                                    reconstructed: fullReconstructed
                                 });
                             } catch (err) {
                                 continue;
@@ -1161,7 +1254,7 @@ function unwrapCFF(ast) {
                         for (const { callPath, reconstructed } of replacements) {
                             if (callPath.parentPath.isReturnStatement()) {
                                 const fnParent = callPath.getFunctionParent();
-                                if (fnParent && fnParent !== enclosingFn) {
+                                if (fnParent && fnParent.node !== enclosingFn.node) {
                                     if (fnParent.node.body && t.isBlockStatement(fnParent.node.body) && fnParent.node.body.body.length === 1) {
                                         fnParent.node.body = t.blockStatement(reconstructed);
                                         changed = true;
@@ -1276,15 +1369,20 @@ function unwrapCFF(ast) {
                             changed = true;
                             levelChanged = true;
                         }
+
+                        if (replacements.length === externalCalls.length && !hasMoreWaves) {
+                            break;
+                        }
                     }
 
-                    enclosingFn.parentPath.scope.crawl();
-                    const updatedBinding = enclosingFn.parentPath.scope.getBinding(mainFnName);
-                    const remainingExternalRefs = updatedBinding
-                        ? updatedBinding.referencePaths.filter(r => !r.findParent(p => p === enclosingFn))
-                        : [];
-                    if (remainingExternalRefs.length === 0) {
-                        enclosingFn.remove();
+                    if (!containsIdentifierNamed(ast.program, mainFnName, enclosingFn.node)) {
+                        const parentBody = enclosingFn.parentPath && enclosingFn.parentPath.node && enclosingFn.parentPath.node.body;
+                        if (Array.isArray(parentBody)) {
+                            const fnIdx = parentBody.indexOf(enclosingFn.node);
+                            if (fnIdx !== -1) parentBody.splice(fnIdx, 1);
+                        } else {
+                            enclosingFn.remove();
+                        }
                         changed = true;
                         levelChanged = true;
                     } else {
@@ -1297,14 +1395,16 @@ function unwrapCFF(ast) {
                 }
             } catch (candErr) {}
             }
-            if (unboxCFFScopes(ast)) changed = true;
-            if (restoreCFFParamsAndFunctions(ast)) changed = true;
-            if (!levelChanged) break;
+            if (levelChanged) {
+                if (unboxCFFScopes(ast)) changed = true;
+                if (restoreCFFParamsAndFunctions(ast)) changed = true;
+            } else {
+                break;
+            }
         }
-    } else {
-        if (unboxCFFScopes(ast)) changed = true;
-        if (restoreCFFParamsAndFunctions(ast)) changed = true;
     }
+    if (unboxCFFScopes(ast)) changed = true;
+    if (restoreCFFParamsAndFunctions(ast)) changed = true;
 
     if (changed) {
         cleanReachabilityDCE(ast);
