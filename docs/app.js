@@ -8,12 +8,19 @@
     const themeLabel = document.getElementById('themeLabel');
     const runBtn = document.getElementById('runBtn');
     const cancelBtn = document.getElementById('cancelBtn');
+    const statusDot = document.getElementById('statusDot');
     const workedToggle = document.getElementById('workedToggle');
     const workedText = document.getElementById('workedText');
+    const expandStepsBtn = document.getElementById('expandStepsBtn');
+    const expandStepsLabel = document.getElementById('expandStepsLabel');
+    const summaryTrigger = document.getElementById('summaryTrigger');
     const taskList = document.getElementById('taskList');
     const liveActiveRow = document.getElementById('liveActiveRow');
     const liveActiveLabel = document.getElementById('liveActiveLabel');
     const liveActiveStepCounter = document.getElementById('liveActiveStepCounter');
+    const latestStepPreview = document.getElementById('latestStepPreview');
+    const latestStepText = document.getElementById('latestStepText');
+    const latestStepDuration = document.getElementById('latestStepDuration');
     const summaryMainText = document.getElementById('summaryMainText');
     const summaryAdded = document.getElementById('summaryAdded');
     const summaryRemoved = document.getElementById('summaryRemoved');
@@ -23,6 +30,8 @@
     const downloadBtn = document.getElementById('downloadBtn');
     const inputEditor = document.getElementById('inputEditor');
     const outputEditor = document.getElementById('outputEditor');
+    const inputGutter = document.getElementById('inputGutter');
+    const outputGutter = document.getElementById('outputGutter');
     const inputMeta = document.getElementById('inputMeta');
     const outputMeta = document.getElementById('outputMeta');
 
@@ -32,6 +41,8 @@
     let rafHandle = 0;
     let isExpanded = false;
     let totalTransformHits = 0;
+    let detectedLayers = [];
+    let autoRunTimer = 0;
 
     function applyTheme(theme) {
         const next = theme === 'light' ? 'light' : 'dark';
@@ -66,11 +77,13 @@
     function toggleTaskFeed() {
         isExpanded = !isExpanded;
         workedToggle.classList.toggle('is-expanded', isExpanded);
+        expandStepsBtn.classList.toggle('is-expanded', isExpanded);
         taskList.classList.toggle('is-expanded', isExpanded);
     }
 
     workedToggle.addEventListener('click', toggleTaskFeed);
-    document.querySelector('.summary-left').addEventListener('click', toggleTaskFeed);
+    expandStepsBtn.addEventListener('click', toggleTaskFeed);
+    summaryTrigger.addEventListener('click', toggleTaskFeed);
 
     function formatBytes(bytes) {
         if (bytes < 1024) return bytes + ' B';
@@ -92,12 +105,33 @@
         return count;
     }
 
+    function buildGutterString(lineCount) {
+        const total = Math.max(1, Math.min(lineCount, 1500));
+        const parts = new Array(total);
+        for (let i = 0; i < total; i++) {
+            parts[i] = i + 1;
+        }
+        return parts.join('\n');
+    }
+
     function updateMeta() {
         const inVal = inputEditor.value || '';
         const outVal = outputEditor.value || '';
-        inputMeta.textContent = formatBytes(inVal.length) + ' · ' + countLines(inVal) + ' lines';
-        outputMeta.textContent = formatBytes(outVal.length) + ' · ' + countLines(outVal) + ' lines';
+        const inLines = countLines(inVal);
+        const outLines = countLines(outVal);
+        inputMeta.textContent = formatBytes(inVal.length) + ' · ' + inLines + (inLines === 1 ? ' line' : ' lines');
+        outputMeta.textContent = formatBytes(outVal.length) + ' · ' + outLines + (outLines === 1 ? ' line' : ' lines');
+        inputGutter.textContent = buildGutterString(inLines);
+        outputGutter.textContent = buildGutterString(outLines);
     }
+
+    inputEditor.addEventListener('scroll', function () {
+        inputGutter.scrollTop = inputEditor.scrollTop;
+    });
+
+    outputEditor.addEventListener('scroll', function () {
+        outputGutter.scrollTop = outputEditor.scrollTop;
+    });
 
     function startLiveClock() {
         stopLiveClock();
@@ -125,19 +159,14 @@
         const span = document.createElement('span');
         span.className = 'task-icon';
         span.innerHTML =
-            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 12.5l2.3 2.3 4.7-4.8"></path></svg>';
-        return span;
-    }
-
-    function createChevronSvg() {
-        const span = document.createElement('span');
-        span.className = 'task-icon';
-        span.innerHTML =
-            '<svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"></path></svg>';
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 12.5l2.3 2.3 4.7-4.8"></path></svg>';
         return span;
     }
 
     function appendCompletedTaskRow(label, durationMs) {
+        latestStepText.textContent = label;
+        latestStepDuration.textContent = typeof durationMs === 'number' ? formatDuration(durationMs) : '';
+
         const row = document.createElement('div');
         row.className = 'task-row';
 
@@ -161,17 +190,10 @@
         if (typeof durationMs === 'number') {
             row.appendChild(dur);
         }
-        row.appendChild(createChevronSvg());
 
         taskList.appendChild(row);
-        const allRows = taskList.querySelectorAll('.task-row');
-        for (let i = 0; i < allRows.length; i++) {
-            if (i < allRows.length - 2) {
-                allRows[i].classList.add('is-collapsed-history');
-            } else {
-                allRows[i].classList.remove('is-collapsed-history');
-            }
-        }
+        const count = taskList.querySelectorAll('.task-row').length;
+        expandStepsLabel.textContent = count + ' steps';
         taskList.scrollTop = taskList.scrollHeight;
     }
 
@@ -179,10 +201,9 @@
         runBtn.disabled = isRunning;
         cancelBtn.hidden = !isRunning;
         liveActiveRow.hidden = !isRunning;
+        latestStepPreview.hidden = isRunning;
+        statusDot.classList.toggle('is-running', isRunning);
     }
-
-    let detectedLayers = [];
-    let autoRunTimer = 0;
 
     function handleProgressEvent(info) {
         if (!info) return;
@@ -260,7 +281,8 @@
             if (jobId !== activeJobId) return;
             stopLiveClock();
             setRunningUI(false);
-            workedText.textContent = 'Syntax / AST Error · ' + (err && err.message ? err.message : String(err));
+            workedText.textContent = 'Syntax / AST Error';
+            latestStepText.textContent = err && err.message ? err.message : String(err);
         }
     }
 
@@ -301,7 +323,8 @@
                 } else if (data.type === 'ERROR') {
                     stopLiveClock();
                     setRunningUI(false);
-                    workedText.textContent = 'Syntax / AST Error · ' + (data.message || 'Deobfuscation failed');
+                    workedText.textContent = 'Syntax / AST Error';
+                    latestStepText.textContent = data.message || 'Deobfuscation failed';
                 }
             };
             worker.onerror = function (err) {
@@ -323,7 +346,9 @@
         }
         const code = inputEditor.value;
         if (!code || !code.trim()) {
-            workedText.textContent = 'Paste or drop any obfuscated script to auto-deobfuscate';
+            workedText.textContent = 'Idle';
+            latestStepText.textContent = 'Paste or drop any obfuscated script to auto-deobfuscate';
+            latestStepDuration.textContent = '';
             return;
         }
         activeJobId++;
@@ -331,6 +356,7 @@
         totalTransformHits = 0;
         detectedLayers = [];
         taskList.innerHTML = '';
+        expandStepsLabel.textContent = '0 steps';
         summaryMainText.textContent = 'Auto-detecting obfuscation layers...';
         summaryAdded.textContent = '+0 B';
         summaryRemoved.textContent = '-' + formatBytes(code.length);
@@ -407,7 +433,10 @@
         inputEditor.value = '';
         outputEditor.value = '';
         taskList.innerHTML = '';
-        workedText.textContent = 'Paste or drop any JS script to auto-deobfuscate';
+        expandStepsLabel.textContent = '0 steps';
+        workedText.textContent = 'Idle';
+        latestStepText.textContent = 'Paste or drop any JS script to auto-deobfuscate';
+        latestStepDuration.textContent = '';
         summaryMainText.textContent = 'Waiting for input script';
         summaryAdded.textContent = '+0 B';
         summaryRemoved.textContent = '-0 B';

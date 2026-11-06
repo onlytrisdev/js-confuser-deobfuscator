@@ -3,127 +3,212 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>js-confuser-deobfuscator</title>
+    <title>js-confuser-deobfuscator — AST Deobfuscation Workbench</title>
     <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-    <header class="topbar">
-        <div class="topbar-left">
-            <h1 class="app-title">js-confuser-deobfuscator</h1>
+    <header class="navbar">
+        <div class="nav-left">
+            <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="brand-link">
+                <span class="brand-logo" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                </span>
+                <span class="brand-name">js-confuser-deobfuscator</span>
+            </a>
+            <span class="version-pill">14 AST Passes</span>
+            <nav class="nav-links" aria-label="GitHub links">
+                <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="nav-item">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
+                    </svg>
+                    <span>GitHub</span>
+                </a>
+                <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator/issues" target="_blank" rel="noopener noreferrer" class="nav-item">
+                    <span>Issues</span>
+                </a>
+                <a href="https://github.com/onlytrisdev" target="_blank" rel="noopener noreferrer" class="nav-item">
+                    <span>@onlytrisdev</span>
+                </a>
+            </nav>
         </div>
-        <div class="topbar-right">
-            <select id="sampleSelect" class="pill-select" aria-label="Select obfuscated sample">
-                <option value="custom" hidden>Custom Script (Auto-detect)</option>
-                <option value="dispatcher-masking" selected>Dispatcher + Flatten + Masking</option>
-                <option value="preset-low">Preset Low</option>
-                <option value="preset-medium">Preset Medium</option>
-                <option value="cff-calculator">CFF + Calculator + Dead Code</option>
-                <option value="preset-high">Preset High (All 14 Layers)</option>
-            </select>
-            <label for="fileInput" class="pill-btn">Upload</label>
-            <input id="fileInput" type="file" accept=".js,.mjs,.cjs,.txt" hidden>
-            <button id="clearBtn" class="pill-btn" type="button">Clear</button>
-            <button id="themeToggle" class="pill-btn icon-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Toggle Light/Dark Theme">
-                <svg id="themeIconDark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+
+        <div class="nav-right">
+            <div class="select-wrap">
+                <select id="sampleSelect" class="control-select" aria-label="Select obfuscated sample">
+                    <option value="custom" hidden>Custom Script (Auto-detect)</option>
+                    <option value="dispatcher-masking" selected>Preset: Dispatcher + Flatten + Masking</option>
+                    <option value="preset-low">Preset: Low</option>
+                    <option value="preset-medium">Preset: Medium</option>
+                    <option value="cff-calculator">Preset: CFF + Calculator + Dead Code</option>
+                    <option value="preset-high">Preset: High (All 14 Layers)</option>
+                </select>
+            </div>
+
+            <button id="themeToggle" class="control-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Switch Theme">
+                <svg id="themeIconDark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="4"></circle>
                     <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
                 </svg>
-                <svg id="themeIconLight" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden>
+                <svg id="themeIconLight" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
                     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
                 </svg>
                 <span id="themeLabel">Light</span>
             </button>
-            <button id="runBtn" class="run-btn" type="button">
+
+            <button id="runBtn" class="primary-btn" type="button">
                 <span>Deobfuscate</span>
-                <span class="run-arrow">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <kbd class="shortcut-kbd">Ctrl+↵</kbd>
+                <span class="primary-arrow" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M5 12h14M13 5l7 7-7 7"></path>
                     </svg>
                 </span>
             </button>
-            <button id="cancelBtn" class="pill-btn stop-btn" type="button" hidden>Stop</button>
+            <button id="cancelBtn" class="control-btn stop-btn" type="button" hidden>Stop</button>
         </div>
     </header>
 
-    <div class="container">
-        <section class="activity-feed" aria-label="Deobfuscation task progress">
-            <button id="workedToggle" class="worked-row" type="button">
-                <span id="workedText">Worked for 0.0s</span>
-                <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M9 18l6-6-6-6"></path>
-                </svg>
-            </button>
+    <div class="workbench">
+        <section class="telemetry-card" aria-label="Deobfuscation task telemetry">
+            <div class="telemetry-bar">
+                <div class="telemetry-left">
+                    <button id="workedToggle" class="worked-trigger" type="button">
+                        <span id="statusDot" class="status-dot"></span>
+                        <span id="workedText" class="worked-title">Worked for 0.0s</span>
+                        <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 18l6-6-6-6"></path>
+                        </svg>
+                    </button>
 
-            <div id="taskList" class="task-list"></div>
+                    <span class="telemetry-divider" aria-hidden="true"></span>
 
-            <div id="liveActiveRow" class="task-row is-active" hidden>
-                <span class="task-prefix">Started</span>
-                <span class="task-icon spinner-icon" aria-hidden="true"></span>
-                <span id="liveActiveLabel" class="task-label">Initializing AST pipeline...</span>
-                <span id="liveActiveStepCounter" class="task-duration"></span>
+                    <div id="liveActiveRow" class="inline-step is-active" hidden>
+                        <span class="task-prefix">Started</span>
+                        <span class="spinner-icon" aria-hidden="true"></span>
+                        <span id="liveActiveLabel" class="task-label">Initializing AST pipeline...</span>
+                        <span id="liveActiveStepCounter" class="task-duration"></span>
+                    </div>
+
+                    <div id="latestStepPreview" class="inline-step">
+                        <span class="task-prefix">Started</span>
+                        <span class="task-icon" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="9"></circle>
+                                <path d="M8.5 12.5l2.3 2.3 4.7-4.8"></path>
+                            </svg>
+                        </span>
+                        <span id="latestStepText" class="task-label">Ready</span>
+                        <span id="latestStepDuration" class="task-duration"></span>
+                    </div>
+                </div>
+
+                <div class="telemetry-right">
+                    <div class="summary-left" id="summaryTrigger">
+                        <span id="summaryMainText" class="summary-main">0 transforms applied</span>
+                        <span id="summaryAdded" class="diff-add">+0 B</span>
+                        <span id="summaryRemoved" class="diff-del">-0 B</span>
+                        <span id="summaryPercent" class="summary-pct">(0%)</span>
+                    </div>
+                    <button id="expandStepsBtn" class="ghost-xs-btn" type="button">
+                        <span id="expandStepsLabel">Steps</span>
+                        <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M6 9l6 6 6-6"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
 
-            <div id="summaryBar" class="summary-bar">
-                <div class="summary-left">
-                    <span id="summaryMainText" class="summary-main">0 transforms applied</span>
-                    <span id="summaryAdded" class="diff-add">+0 B</span>
-                    <span id="summaryRemoved" class="diff-del">-0 B</span>
-                    <span id="summaryPercent" class="summary-pct">(0%)</span>
-                    <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M9 18l6-6-6-6"></path>
-                    </svg>
-                </div>
-                <div class="summary-actions">
-                    <button id="copyBtn" class="review-btn" type="button">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                        <span id="copyBtnText">Copy</span>
-                    </button>
-                    <button id="downloadBtn" class="review-btn" type="button">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="7 10 12 15 17 10"></polyline>
-                            <line x1="12" y1="15" x2="12" y2="3"></line>
-                        </svg>
-                        <span>Download</span>
-                    </button>
-                </div>
-            </div>
+            <div id="taskList" class="task-drawer"></div>
         </section>
 
         <main class="workspace">
-            <section class="editor-card">
-                <div class="card-header">
-                    <span class="card-title">Input</span>
-                    <span id="inputMeta" class="card-meta">0 B · 0 lines</span>
+            <section class="editor-pane">
+                <div class="pane-header">
+                    <div class="pane-title-group">
+                        <span class="pane-badge">INPUT</span>
+                        <span class="pane-subtitle">Obfuscated JS</span>
+                        <span id="inputMeta" class="pane-meta">0 B · 0 lines</span>
+                    </div>
+                    <div class="pane-actions">
+                        <label for="fileInput" class="pane-btn">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <span>Upload .js</span>
+                        </label>
+                        <input id="fileInput" type="file" accept=".js,.mjs,.cjs,.txt" hidden>
+                        <button id="clearBtn" class="pane-btn" type="button">Clear</button>
+                    </div>
                 </div>
-                <textarea
-                    id="inputEditor"
-                    class="code-editor"
-                    spellcheck="false"
-                    autocapitalize="off"
-                    autocomplete="off"
-                    placeholder="Paste obfuscated JavaScript here..."
-                ></textarea>
+                <div class="editor-body">
+                    <div id="inputGutter" class="line-gutter" aria-hidden="true">1</div>
+                    <textarea
+                        id="inputEditor"
+                        class="code-editor"
+                        spellcheck="false"
+                        autocapitalize="off"
+                        autocomplete="off"
+                        placeholder="Paste or drop js-confuser obfuscated JavaScript here..."
+                    ></textarea>
+                </div>
             </section>
 
-            <section class="editor-card">
-                <div class="card-header">
-                    <span class="card-title">Output</span>
-                    <span id="outputMeta" class="card-meta">0 B · 0 lines</span>
+            <section class="editor-pane">
+                <div class="pane-header">
+                    <div class="pane-title-group">
+                        <span class="pane-badge badge-out">OUTPUT</span>
+                        <span class="pane-subtitle">Deobfuscated JS</span>
+                        <span id="outputMeta" class="pane-meta">0 B · 0 lines</span>
+                    </div>
+                    <div class="pane-actions">
+                        <button id="copyBtn" class="pane-btn" type="button">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            <span id="copyBtnText">Copy</span>
+                        </button>
+                        <button id="downloadBtn" class="pane-btn" type="button">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span>Download .js</span>
+                        </button>
+                    </div>
                 </div>
-                <textarea
-                    id="outputEditor"
-                    class="code-editor"
-                    spellcheck="false"
-                    readonly
-                    placeholder="Deobfuscated JavaScript will appear here..."
-                ></textarea>
+                <div class="editor-body">
+                    <div id="outputGutter" class="line-gutter" aria-hidden="true">1</div>
+                    <textarea
+                        id="outputEditor"
+                        class="code-editor"
+                        spellcheck="false"
+                        readonly
+                        placeholder="Clean deobfuscated JavaScript will appear here..."
+                    ></textarea>
+                </div>
             </section>
         </main>
     </div>
+
+    <footer class="footer">
+        <div class="footer-left">
+            <span>Browser Web Worker AST Engine · Zero server uploads · 100% client-side execution</span>
+        </div>
+        <div class="footer-right">
+            <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="footer-link">Repository</a>
+            <span class="footer-dot">·</span>
+            <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator/issues" target="_blank" rel="noopener noreferrer" class="footer-link">Report Bug</a>
+            <span class="footer-dot">·</span>
+            <a href="https://github.com/onlytrisdev" target="_blank" rel="noopener noreferrer" class="footer-link">github.com/onlytrisdev</a>
+        </div>
+    </footer>
 
     <script src="./deobfuscator.bundle.js"></script>
     <script src="./samples.js"></script>
