@@ -1,5 +1,44 @@
 (function () {
-    const sampleSelect = document.getElementById('sampleSelect');
+    const DEFAULT_OBFUSCATED_SNIPPET = [
+        'var _0x4a2b = ["AUTH_OK_2026", "onlytris", ":", "log"];',
+        'function _0x1f8e(_0x9c1a, _0x3d4b) {',
+        '    return _0x9c1a + _0x3d4b;',
+        '}',
+        'function fib(_v_n) {',
+        '    var _state = 0x10;',
+        '    while (_state !== 0x0) {',
+        '        switch (_state) {',
+        '            case 0x10:',
+        '                _state = _v_n <= 1 ? 0x20 : 0x30;',
+        '                break;',
+        '            case 0x20:',
+        '                return _v_n;',
+        '            case 0x30:',
+        '                return _0x1f8e(fib(_v_n - 1), fib(_v_n - 2));',
+        '        }',
+        '    }',
+        '}',
+        'function verifyAccess(user, code) {',
+        '    var tag = _0x4a2b[0];',
+        '    return tag + _0x4a2b[2] + user + _0x4a2b[2] + fib(code);',
+        '}',
+        'console[_0x4a2b[3]](verifyAccess(_0x4a2b[1], 10));'
+    ].join('\n');
+
+    const JS_KEYWORDS = new Set([
+        'function', 'return', 'var', 'let', 'const', 'if', 'else', 'for', 'while',
+        'do', 'switch', 'case', 'break', 'continue', 'default', 'new', 'typeof',
+        'void', 'delete', 'in', 'instanceof', 'try', 'catch', 'finally', 'throw',
+        'class', 'extends', 'super', 'import', 'export', 'from', 'async', 'await', 'yield', 'of'
+    ]);
+
+    const JS_BUILTINS = new Set([
+        'true', 'false', 'null', 'undefined', 'NaN', 'Infinity', 'this', 'arguments',
+        'console', 'window', 'globalThis', 'global', 'Math', 'Object', 'Array',
+        'String', 'Number', 'Boolean', 'RegExp', 'Promise', 'Map', 'Set', 'JSON',
+        'Date', 'Error', 'TypeError', 'Symbol', ' BigInt', 'parseInt', 'parseFloat'
+    ]);
+
     const fileInput = document.getElementById('fileInput');
     const clearBtn = document.getElementById('clearBtn');
     const themeToggle = document.getElementById('themeToggle');
@@ -19,6 +58,8 @@
     const liveActiveLabel = document.getElementById('liveActiveLabel');
     const liveActiveStepCounter = document.getElementById('liveActiveStepCounter');
     const latestStepPreview = document.getElementById('latestStepPreview');
+    const latestStepPrefix = document.getElementById('latestStepPrefix');
+    const latestStepIcon = document.getElementById('latestStepIcon');
     const latestStepText = document.getElementById('latestStepText');
     const latestStepDuration = document.getElementById('latestStepDuration');
     const summaryMainText = document.getElementById('summaryMainText');
@@ -30,6 +71,8 @@
     const downloadBtn = document.getElementById('downloadBtn');
     const inputEditor = document.getElementById('inputEditor');
     const outputEditor = document.getElementById('outputEditor');
+    const inputHighlight = document.getElementById('inputHighlight');
+    const outputHighlight = document.getElementById('outputHighlight');
     const inputGutter = document.getElementById('inputGutter');
     const outputGutter = document.getElementById('outputGutter');
     const inputMeta = document.getElementById('inputMeta');
@@ -42,7 +85,69 @@
     let isExpanded = false;
     let totalTransformHits = 0;
     let detectedLayers = [];
-    let autoRunTimer = 0;
+
+    function escapeHtml(str) {
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function highlightJS(source) {
+        if (!source) return '';
+        if (source.length > 65000) {
+            return escapeHtml(source);
+        }
+        const tokenRe = /("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`)|(\b0[xX][0-9a-fA-F]+\b|\b\d+(?:\.\d+)?\b)|(\.[a-zA-Z_$][\w$]*)|(\b[a-zA-Z_$][\w$]*\b)(\s*\()?|([{}()[\].,:;?+\-*/%&|^!~=<>]+)/g;
+        let out = '';
+        let lastIndex = 0;
+        let match;
+        while ((match = tokenRe.exec(source)) !== null) {
+            if (match.index > lastIndex) {
+                out += escapeHtml(source.slice(lastIndex, match.index));
+            }
+            const full = match[0];
+            const strLit = match[1];
+            const numLit = match[2];
+            const propAccess = match[3];
+            const ident = match[4];
+            const callParen = match[5];
+            const punct = match[6];
+
+            if (strLit) {
+                out += '<span class="tok-str">' + escapeHtml(strLit) + '</span>';
+            } else if (numLit) {
+                out += '<span class="tok-num">' + escapeHtml(numLit) + '</span>';
+            } else if (propAccess) {
+                out += '<span class="tok-op">.</span><span class="tok-prop">' + escapeHtml(propAccess.slice(1)) + '</span>';
+            } else if (ident) {
+                if (JS_KEYWORDS.has(ident)) {
+                    out += '<span class="tok-kw">' + escapeHtml(ident) + '</span>';
+                } else if (JS_BUILTINS.has(ident)) {
+                    out += '<span class="tok-bool">' + escapeHtml(ident) + '</span>';
+                } else if (callParen) {
+                    out += '<span class="tok-fn">' + escapeHtml(ident) + '</span>';
+                } else {
+                    out += escapeHtml(ident);
+                }
+                if (callParen) {
+                    out += escapeHtml(callParen);
+                }
+            } else if (punct) {
+                out += '<span class="tok-op">' + escapeHtml(punct) + '</span>';
+            } else {
+                out += escapeHtml(full);
+            }
+            lastIndex = tokenRe.lastIndex;
+        }
+        if (lastIndex < source.length) {
+            out += escapeHtml(source.slice(lastIndex));
+        }
+        if (source.endsWith('\n')) {
+            out += ' ';
+        }
+        return out;
+    }
 
     function applyTheme(theme) {
         const next = theme === 'light' ? 'light' : 'dark';
@@ -123,14 +228,20 @@
         outputMeta.textContent = formatBytes(outVal.length) + ' · ' + outLines + (outLines === 1 ? ' line' : ' lines');
         inputGutter.textContent = buildGutterString(inLines);
         outputGutter.textContent = buildGutterString(outLines);
+        inputHighlight.innerHTML = highlightJS(inVal);
+        outputHighlight.innerHTML = highlightJS(outVal);
     }
 
     inputEditor.addEventListener('scroll', function () {
         inputGutter.scrollTop = inputEditor.scrollTop;
+        inputHighlight.scrollTop = inputEditor.scrollTop;
+        inputHighlight.scrollLeft = inputEditor.scrollLeft;
     });
 
     outputEditor.addEventListener('scroll', function () {
         outputGutter.scrollTop = outputEditor.scrollTop;
+        outputHighlight.scrollTop = outputEditor.scrollTop;
+        outputHighlight.scrollLeft = outputEditor.scrollLeft;
     });
 
     function startLiveClock() {
@@ -164,6 +275,8 @@
     }
 
     function appendCompletedTaskRow(label, durationMs) {
+        latestStepPrefix.textContent = 'Started';
+        latestStepIcon.removeAttribute('hidden');
         latestStepText.textContent = label;
         latestStepDuration.textContent = typeof durationMs === 'number' ? formatDuration(durationMs) : '';
 
@@ -203,6 +316,9 @@
         liveActiveRow.hidden = !isRunning;
         latestStepPreview.hidden = isRunning;
         statusDot.classList.toggle('is-running', isRunning);
+        if (isRunning) {
+            statusDot.classList.remove('is-idle');
+        }
     }
 
     function handleProgressEvent(info) {
@@ -340,14 +456,12 @@
     }
 
     function startDeobfuscation() {
-        if (autoRunTimer) {
-            clearTimeout(autoRunTimer);
-            autoRunTimer = 0;
-        }
         const code = inputEditor.value;
         if (!code || !code.trim()) {
             workedText.textContent = 'Idle';
-            latestStepText.textContent = 'Paste or drop any obfuscated script to auto-deobfuscate';
+            latestStepPrefix.textContent = 'Status';
+            latestStepIcon.setAttribute('hidden', '');
+            latestStepText.textContent = 'Paste or upload a .js file first, then click Deobfuscate';
             latestStepDuration.textContent = '';
             return;
         }
@@ -382,10 +496,6 @@
     }
 
     function cancelDeobfuscation() {
-        if (autoRunTimer) {
-            clearTimeout(autoRunTimer);
-            autoRunTimer = 0;
-        }
         activeJobId++;
         stopLiveClock();
         if (worker) {
@@ -393,55 +503,42 @@
             worker = null;
         }
         setRunningUI(false);
+        statusDot.classList.add('is-idle');
         workedText.textContent = 'Stopped';
     }
 
-    function markCustomScriptMode() {
-        const customOpt = sampleSelect.querySelector('option[value="custom"]');
-        if (customOpt) {
-            customOpt.removeAttribute('hidden');
-            sampleSelect.value = 'custom';
-        }
+    function markInputReady(label) {
+        statusDot.classList.add('is-idle');
+        statusDot.classList.remove('is-running');
+        workedText.textContent = 'Idle';
+        latestStepPrefix.textContent = 'Input';
+        latestStepIcon.setAttribute('hidden', '');
+        latestStepText.textContent = label || 'Script loaded in input.js · click "Deobfuscate" to run';
+        latestStepDuration.textContent = '';
+        summaryMainText.textContent = 'Click Deobfuscate (or press Ctrl+Enter) to start';
     }
-
-    function loadSample(sampleKey) {
-        const samples = window.DEOBF_SAMPLES || {};
-        const item = samples[sampleKey];
-        if (!item) return;
-        inputEditor.value = item.code;
-        outputEditor.value = '';
-        updateMeta();
-    }
-
-    sampleSelect.addEventListener('change', function () {
-        if (sampleSelect.value === 'custom') return;
-        loadSample(sampleSelect.value);
-        startDeobfuscation();
-    });
 
     runBtn.addEventListener('click', startDeobfuscation);
     cancelBtn.addEventListener('click', cancelDeobfuscation);
 
     clearBtn.addEventListener('click', function () {
-        if (autoRunTimer) {
-            clearTimeout(autoRunTimer);
-            autoRunTimer = 0;
-        }
         activeJobId++;
-        stopLiveClock(0);
+        stopLiveClock();
         setRunningUI(false);
+        statusDot.classList.add('is-idle');
         inputEditor.value = '';
         outputEditor.value = '';
         taskList.innerHTML = '';
         expandStepsLabel.textContent = '0 steps';
         workedText.textContent = 'Idle';
-        latestStepText.textContent = 'Paste or drop any JS script to auto-deobfuscate';
+        latestStepPrefix.textContent = 'Status';
+        latestStepIcon.setAttribute('hidden', '');
+        latestStepText.textContent = 'Paste or upload a .js file into input.js, then click Deobfuscate';
         latestStepDuration.textContent = '';
-        summaryMainText.textContent = 'Waiting for input script';
+        summaryMainText.textContent = 'Waiting for input.js';
         summaryAdded.textContent = '+0 B';
         summaryRemoved.textContent = '-0 B';
         summaryPercent.textContent = '(0%)';
-        markCustomScriptMode();
         updateMeta();
     });
 
@@ -449,11 +546,10 @@
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function () {
-            markCustomScriptMode();
             inputEditor.value = String(reader.result || '');
             outputEditor.value = '';
             updateMeta();
-            startDeobfuscation();
+            markInputReady('Loaded ' + file.name + ' (' + formatBytes(inputEditor.value.length) + ') · click "Deobfuscate" to run');
         };
         reader.readAsText(file);
     }
@@ -463,24 +559,9 @@
         handleUploadedFile(file);
     });
 
-    inputEditor.addEventListener('paste', function () {
-        markCustomScriptMode();
-        if (autoRunTimer) clearTimeout(autoRunTimer);
-        autoRunTimer = setTimeout(function () {
-            updateMeta();
-            startDeobfuscation();
-        }, 60);
-    });
-
     inputEditor.addEventListener('input', function () {
-        markCustomScriptMode();
         updateMeta();
-        if (autoRunTimer) clearTimeout(autoRunTimer);
-        autoRunTimer = setTimeout(function () {
-            if (inputEditor.value && inputEditor.value.trim()) {
-                startDeobfuscation();
-            }
-        }, 500);
+        markInputReady('Modified input.js (' + formatBytes(inputEditor.value.length) + ') · click "Deobfuscate" to run');
     });
 
     inputEditor.addEventListener('dragover', function (e) {
@@ -515,7 +596,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'deobfuscated.js';
+        a.download = 'output.js';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -530,6 +611,7 @@
     });
 
     initTheme();
-    loadSample(sampleSelect.value);
-    startDeobfuscation();
+    inputEditor.value = DEFAULT_OBFUSCATED_SNIPPET;
+    outputEditor.value = '';
+    updateMeta();
 })();

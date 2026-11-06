@@ -3,25 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>js-confuser-deobfuscator — AST Deobfuscation Workbench</title>
+    <title>js-confuser-deobfuscator · JavaScript AST Deobfuscator</title>
     <link rel="stylesheet" href="./style.css">
 </head>
 <body>
     <header class="navbar">
-        <div class="nav-top">
-            <div class="nav-brand">
-                <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="brand-link">
-                    <span class="brand-logo" aria-hidden="true">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="16 18 22 12 16 6"></polyline>
-                            <polyline points="8 6 2 12 8 18"></polyline>
-                        </svg>
-                    </span>
-                    <span class="brand-name">js-confuser-deobfuscator</span>
-                </a>
-                <span class="version-pill">14 AST Passes</span>
-            </div>
+        <div class="nav-brand">
+            <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="brand-link">
+                <span class="js-badge-logo" aria-hidden="true">JS</span>
+                <span class="brand-name">js-confuser-deobfuscator</span>
+            </a>
+            <span class="version-pill">Auto-Detect AST · 14 Passes</span>
+        </div>
 
+        <div class="nav-actions">
             <nav class="nav-links" aria-label="GitHub links">
                 <a href="https://github.com/onlytrisdev/js-confuser-deobfuscator" target="_blank" rel="noopener noreferrer" class="nav-item">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -35,28 +30,18 @@
                 <a href="https://github.com/onlytrisdev" target="_blank" rel="noopener noreferrer" class="nav-item">
                     <span>@onlytrisdev</span>
                 </a>
-                <button id="themeToggle" class="control-btn theme-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Switch Theme">
-                    <svg id="themeIconDark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="4"></circle>
-                        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
-                    </svg>
-                    <svg id="themeIconLight" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-                    </svg>
-                    <span id="themeLabel">Light</span>
-                </button>
             </nav>
-        </div>
 
-        <div class="nav-controls">
-            <select id="sampleSelect" class="control-select" aria-label="Select obfuscated sample">
-                <option value="custom" hidden>Custom Script (Auto-detect)</option>
-                <option value="dispatcher-masking" selected>Preset: Dispatcher + Flatten + Masking</option>
-                <option value="preset-low">Preset: Low</option>
-                <option value="preset-medium">Preset: Medium</option>
-                <option value="cff-calculator">Preset: CFF + Calculator + Dead Code</option>
-                <option value="preset-high">Preset: High (All 14 Layers)</option>
-            </select>
+            <button id="themeToggle" class="control-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Switch Theme">
+                <svg id="themeIconDark" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                </svg>
+                <svg id="themeIconLight" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden>
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span id="themeLabel">Light</span>
+            </button>
 
             <button id="runBtn" class="primary-btn" type="button">
                 <span>Deobfuscate</span>
@@ -76,8 +61,8 @@
             <div class="telemetry-row-top">
                 <div class="telemetry-status-group">
                     <button id="workedToggle" class="worked-trigger" type="button">
-                        <span id="statusDot" class="status-dot"></span>
-                        <span id="workedText" class="worked-title">Worked for 0.0s</span>
+                        <span id="statusDot" class="status-dot is-idle"></span>
+                        <span id="workedText" class="worked-title">Idle</span>
                         <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M9 18l6-6-6-6"></path>
                         </svg>
@@ -93,14 +78,14 @@
                     </div>
 
                     <div id="latestStepPreview" class="inline-step">
-                        <span class="task-prefix">Started</span>
-                        <span class="task-icon" aria-hidden="true">
+                        <span class="task-prefix" id="latestStepPrefix">Status</span>
+                        <span class="task-icon" id="latestStepIcon" aria-hidden="true" hidden>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <circle cx="12" cy="12" r="9"></circle>
                                 <path d="M8.5 12.5l2.3 2.3 4.7-4.8"></path>
                             </svg>
                         </span>
-                        <span id="latestStepText" class="task-label">Ready</span>
+                        <span id="latestStepText" class="task-label">Click "Deobfuscate" to analyze and deobfuscate input.js</span>
                         <span id="latestStepDuration" class="task-duration"></span>
                     </div>
                 </div>
@@ -116,7 +101,7 @@
             <div id="taskList" class="task-drawer"></div>
 
             <div class="telemetry-row-bottom" id="summaryTrigger">
-                <span id="summaryMainText" class="summary-main">0 transforms applied</span>
+                <span id="summaryMainText" class="summary-main">Waiting for Deobfuscate command</span>
                 <div class="summary-metrics">
                     <span id="summaryAdded" class="diff-add">+0 B</span>
                     <span id="summaryRemoved" class="diff-del">-0 B</span>
@@ -128,9 +113,10 @@
         <main class="workspace">
             <section class="editor-pane">
                 <div class="pane-header">
-                    <div class="pane-title-group">
-                        <span class="pane-badge">INPUT</span>
-                        <span class="pane-subtitle">Obfuscated JS</span>
+                    <div class="pane-tab">
+                        <span class="js-file-icon">JS</span>
+                        <span class="file-name">input.js</span>
+                        <span class="pane-tag">Obfuscated</span>
                         <span id="inputMeta" class="pane-meta">0 B · 0 lines</span>
                     </div>
                     <div class="pane-actions">
@@ -148,22 +134,26 @@
                 </div>
                 <div class="editor-body">
                     <div id="inputGutter" class="line-gutter" aria-hidden="true">1</div>
-                    <textarea
-                        id="inputEditor"
-                        class="code-editor"
-                        spellcheck="false"
-                        autocapitalize="off"
-                        autocomplete="off"
-                        placeholder="Paste or drop js-confuser obfuscated JavaScript here..."
-                    ></textarea>
+                    <div class="editor-stage">
+                        <pre id="inputHighlight" class="code-layer code-highlight" aria-hidden="true"></pre>
+                        <textarea
+                            id="inputEditor"
+                            class="code-layer code-editor has-syntax"
+                            spellcheck="false"
+                            autocapitalize="off"
+                            autocomplete="off"
+                            placeholder="Paste or drop obfuscated .js code here, then click Deobfuscate..."
+                        ></textarea>
+                    </div>
                 </div>
             </section>
 
             <section class="editor-pane">
                 <div class="pane-header">
-                    <div class="pane-title-group">
-                        <span class="pane-badge badge-out">OUTPUT</span>
-                        <span class="pane-subtitle">Deobfuscated JS</span>
+                    <div class="pane-tab">
+                        <span class="js-file-icon is-clean">JS</span>
+                        <span class="file-name">output.js</span>
+                        <span class="pane-tag is-clean">Deobfuscated</span>
                         <span id="outputMeta" class="pane-meta">0 B · 0 lines</span>
                     </div>
                     <div class="pane-actions">
@@ -186,13 +176,16 @@
                 </div>
                 <div class="editor-body">
                     <div id="outputGutter" class="line-gutter" aria-hidden="true">1</div>
-                    <textarea
-                        id="outputEditor"
-                        class="code-editor"
-                        spellcheck="false"
-                        readonly
-                        placeholder="Clean deobfuscated JavaScript will appear here..."
-                    ></textarea>
+                    <div class="editor-stage">
+                        <pre id="outputHighlight" class="code-layer code-highlight" aria-hidden="true"></pre>
+                        <textarea
+                            id="outputEditor"
+                            class="code-layer code-editor has-syntax"
+                            spellcheck="false"
+                            readonly
+                            placeholder="Clean deobfuscated JavaScript will appear here after you click Deobfuscate..."
+                        ></textarea>
+                    </div>
                 </div>
             </section>
         </main>
@@ -212,7 +205,6 @@
     </footer>
 
     <script src="./deobfuscator.bundle.js"></script>
-    <script src="./samples.js"></script>
     <script src="./app.js"></script>
 </body>
 </html>
