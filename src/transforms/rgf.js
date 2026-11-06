@@ -19,9 +19,8 @@ function evalStr(n) {
 function unwrapRgf(ast) {
     let changed = false;
 
-    // 1. Find all RGF arrays:
-    // var rgfArray = [ rgfEval("code...") ];
     const rgfArrays = new Map();
+    const rgfDeclarators = new Map();
 
     traverse(ast, {
         VariableDeclarator(path) {
@@ -49,6 +48,7 @@ function unwrapRgf(ast) {
 
                 if (isRgf && codeStrings.length > 0) {
                     rgfArrays.set(arrName, codeStrings);
+                    rgfDeclarators.set(arrName, path);
                 }
             }
         }
@@ -56,7 +56,6 @@ function unwrapRgf(ast) {
 
     if (rgfArrays.size === 0) return false;
 
-    // 2. Find functions that call rgfArray[index].apply(this, [rgfArray, arguments])
     traverse(ast, {
         Function(fnPath) {
             let rgfMatch = null;
@@ -99,7 +98,6 @@ function unwrapRgf(ast) {
                             plugins: ['jsx', 'typescript']
                         });
 
-                        // Run constant array inlining and string decoding on innerAst
                         inlineConstantArrays(innerAst);
                         decodeStrings(innerAst);
                         inlineConstantArrays(innerAst);
@@ -144,6 +142,50 @@ function unwrapRgf(ast) {
             }
         }
     });
+
+    if (changed) {
+        for (const [arrName, declPath] of rgfDeclarators.entries()) {
+            let refCount = 0;
+            traverse(ast, {
+                Identifier(idPath) {
+                    if (idPath.node.name === arrName && idPath.node !== declPath.node.id) {
+                        refCount++;
+                    }
+                }
+            });
+            if (refCount === 0 && !declPath.removed) {
+                const evalCalleeNames = new Set();
+                for (const el of declPath.node.init.elements) {
+                    if (el && t.isCallExpression(el) && t.isIdentifier(el.callee)) {
+                        evalCalleeNames.add(el.callee.name);
+                    }
+                }
+                declPath.remove();
+                for (const calleeName of evalCalleeNames) {
+                    let calleeRefs = 0;
+                    let calleeFnPath = null;
+                    traverse(ast, {
+                        FunctionDeclaration(fp) {
+                            if (fp.node.id && fp.node.id.name === calleeName) {
+                                calleeFnPath = fp;
+                            }
+                        },
+                        Identifier(idPath) {
+                            if (idPath.node.name === calleeName) {
+                                if (idPath.parentPath.isFunctionDeclaration() && idPath.parentPath.node.id === idPath.node) {
+                                    return;
+                                }
+                                calleeRefs++;
+                            }
+                        }
+                    });
+                    if (calleeRefs === 0 && calleeFnPath && !calleeFnPath.removed) {
+                        calleeFnPath.remove();
+                    }
+                }
+            }
+        }
+    }
 
     return changed;
 }

@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node test/comprehensive-test.js"
+    "test": "node test/comprehensive-test.js && node test/clarity-benchmark.js && node test/adversarial-repros.test.js",
+    "test:comprehensive": "node test/comprehensive-test.js",
+    "test:clarity": "node test/clarity-benchmark.js",
+    "test:adversarial": "node test/adversarial-repros.test.js"
   },
   "keywords": [],
   "author": "",

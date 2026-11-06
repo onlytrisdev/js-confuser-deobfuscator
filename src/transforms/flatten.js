@@ -48,7 +48,8 @@ function unwrapFlatten(ast) {
     const flattenedWrappers = [];
 
     traverse(ast, {
-        FunctionDeclaration(fnPath) {
+        Function(fnPath) {
+            if (!fnPath.node.body || !t.isBlockStatement(fnPath.node.body)) return;
             const body = fnPath.node.body.body;
             if (body.length < 2) return;
 
@@ -180,7 +181,7 @@ function unwrapFlatten(ast) {
                     }
                 }
             });
-            if (isFirstParamFlatObj || allKeys.size === 0) {
+            if (isFirstParamFlatObj || (allKeys.size === 0 && t.isIdentifier(candidateParam))) {
                 isFirstParamFlatObj = true;
                 flatObjParamName = candName;
             }
@@ -218,7 +219,7 @@ function unwrapFlatten(ast) {
                     } else if (t.isExpressionStatement(stmt) && t.isAssignmentExpression(stmt.expression)) {
                         const assign = stmt.expression;
                         if ((t.isArrayPattern(assign.left) || t.isArrayExpression(assign.left)) && isMatchingRight(assign.right)) {
-                            restoredParams = (t.isArrayPattern(assign.left) ? assign.left.elements : assign.left.elements).map(el => t.cloneNode(el));
+                            restoredParams = assign.left.elements.map(el => t.cloneNode(el));
                             flatFnNode.body.body.splice(i, 1);
                             break;
                         }
@@ -235,9 +236,18 @@ function unwrapFlatten(ast) {
                     if (t.isExpressionStatement(stmt) && t.isAssignmentExpression(stmt.expression)) {
                         if (t.isIdentifier(stmt.expression.right, { name: restParamName })) {
                             stmt.expression.right = t.arrayExpression([
-                                t.identifier(flatObjName),
+                                t.objectExpression(flatObjExpr.properties.map(p => t.cloneNode(p))),
                                 t.cloneNode(wrapperRestId)
                             ]);
+                        }
+                    } else if (t.isVariableDeclaration(stmt)) {
+                        for (const d of stmt.declarations) {
+                            if (d.init && t.isIdentifier(d.init, { name: restParamName })) {
+                                d.init = t.arrayExpression([
+                                    t.objectExpression(flatObjExpr.properties.map(p => t.cloneNode(p))),
+                                    t.cloneNode(wrapperRestId)
+                                ]);
+                            }
                         }
                     }
                 }

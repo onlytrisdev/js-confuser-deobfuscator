@@ -12,6 +12,62 @@ function createLocalRestMaskDeclaration(fnExpr) {
     return null;
 }
 
+function hasInnerDispatcher(fnPath) {
+    let found = false;
+    fnPath.traverse({
+        FunctionDeclaration(innerPath) {
+            if (innerPath === fnPath) return;
+            let innerHasFns = false;
+            innerPath.traverse({
+                VariableDeclarator(varPath) {
+                    if (varPath.getFunctionParent() !== innerPath) return;
+                    if (t.isObjectExpression(varPath.node.init)) {
+                        const props = varPath.node.init.properties;
+                        if (props.length > 0 && props.every(p => (t.isObjectProperty(p) && t.isFunctionExpression(p.value)) || (t.isObjectMethod(p) && p.kind === 'method' && !p.computed))) {
+                            innerHasFns = true;
+                        }
+                    }
+                },
+                AssignmentExpression(assignPath) {
+                    if (assignPath.getFunctionParent() !== innerPath) return;
+                    if (t.isObjectExpression(assignPath.node.right)) {
+                        const props = assignPath.node.right.properties;
+                        if (props.length > 0 && props.every(p => (t.isObjectProperty(p) && t.isFunctionExpression(p.value)) || (t.isObjectMethod(p) && p.kind === 'method' && !p.computed))) {
+                            innerHasFns = true;
+                        }
+                    }
+                }
+            });
+            if (innerHasFns) {
+                found = true;
+                innerPath.stop();
+            }
+        }
+    });
+    return found;
+}
+
+function isNameShadowedInPath(mPath, rootNode, varName) {
+    let curr = mPath.parentPath;
+    while (curr && curr.node !== rootNode) {
+        if (curr.isFunction()) {
+            for (const p of curr.node.params) {
+                if (t.isIdentifier(p, { name: varName })) return true;
+                if (t.isRestElement(p) && t.isIdentifier(p.argument, { name: varName })) return true;
+                if (t.isAssignmentPattern(p) && t.isIdentifier(p.left, { name: varName })) return true;
+            }
+            if (t.isBlockStatement(curr.node.body)) {
+                for (const s of curr.node.body.body) {
+                    if (t.isVariableDeclaration(s) && s.declarations.some(d => t.isIdentifier(d.id, { name: varName }))) return true;
+                    if (t.isFunctionDeclaration(s) && s.id && s.id.name === varName) return true;
+                }
+            }
+        }
+        curr = curr.parentPath;
+    }
+    return false;
+}
+
 function unwrapDispatcher(ast) {
     let changed = false;
 
@@ -20,7 +76,10 @@ function unwrapDispatcher(ast) {
     traverse(ast, {
         FunctionDeclaration(path) {
             if (!path.node.id) return;
+            if (path.removed || path.findParent(p => p.removed)) return;
             const dispatcherName = path.node.id.name;
+
+            if (hasInnerDispatcher(path)) return;
 
             let fnsObject = null;
             let payloadVarName = null;
@@ -187,10 +246,11 @@ function unwrapDispatcher(ast) {
                         params = patternElements.map((el, idx) => {
                             if (el && t.isMemberExpression(el)) {
                                 const paramId = path.scope.generateUidIdentifier(`p${idx}`);
+                                const objName = t.isIdentifier(el.object) ? el.object.name : null;
                                 traverse(tempBlock, {
                                     noScope: true,
-                                    Function(f) { f.skip(); },
                                     MemberExpression(mPath) {
+                                        if (objName && isNameShadowedInPath(mPath, tempBlock, objName)) return;
                                         if (t.isNodesEquivalent(mPath.node, el)) {
                                             mPath.replaceWith(t.cloneNode(paramId));
                                         }
@@ -221,8 +281,8 @@ function unwrapDispatcher(ast) {
                             const localVars = new Set();
                             traverse(tempBlock, {
                                 noScope: true,
-                                Function(f) { f.skip(); },
                                 MemberExpression(mPath) {
+                                    if (isNameShadowedInPath(mPath, tempBlock, stackName)) return;
                                     if (t.isIdentifier(mPath.node.object, { name: stackName })) {
                                         const prop = mPath.node.property;
                                         let pKey = null;

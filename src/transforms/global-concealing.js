@@ -35,7 +35,7 @@ function extractGlobalConcealingMap(funcNode) {
     }
     if (!switchStmt) return null;
 
-    const globalMap = new Map(); // mappingKey -> originalGlobalName
+    const globalMap = new Map();
     let globalVarName = null;
 
     for (const sc of switchStmt.cases) {
@@ -77,41 +77,70 @@ function extractGlobalConcealingMap(funcNode) {
 
 function inlineGlobalConcealing(ast) {
     let changed = false;
-    const globalFunctions = new Map(); // fnName -> { globalMap, globalVarName, path }
-    const globalVars = new Set();
-    const globalVarFnNames = new Set();
+    const candidateFunctions = new Map();
+    const candidateVars = new Set();
 
     traverse(ast, {
         FunctionDeclaration(path) {
             if (path.node.id) {
                 const extracted = extractGlobalConcealingMap(path.node);
                 if (extracted) {
-                    globalFunctions.set(path.node.id.name, {
+                    candidateFunctions.set(path.node.id.name, {
                         ...extracted,
                         path: path
                     });
                     if (extracted.globalVarName) {
-                        globalVars.add(extracted.globalVarName);
+                        candidateVars.add(extracted.globalVarName);
                     }
                 }
             }
         }
     });
 
-    // Also find getGlobalVarFn
+    const verifiedGlobalVars = new Set();
+    const globalVarFnNames = new Set();
     traverse(ast, {
         VariableDeclarator(path) {
-            if (t.isIdentifier(path.node.id) && globalVars.has(path.node.id.name) && path.node.init) {
-                if (t.isCallExpression(path.node.init) && t.isIdentifier(path.node.init.callee)) {
-                    globalVarFnNames.add(path.node.init.callee.name);
+            if (t.isIdentifier(path.node.id) && candidateVars.has(path.node.id.name) && path.node.init) {
+                const init = path.node.init;
+                if (t.isCallExpression(init) && t.isIdentifier(init.callee)) {
+                    verifiedGlobalVars.add(path.node.id.name);
+                    globalVarFnNames.add(init.callee.name);
+                } else if (t.isLogicalExpression(init, { operator: '||' }) && t.isCallExpression(init.left) && t.isIdentifier(init.left.callee)) {
+                    verifiedGlobalVars.add(path.node.id.name);
+                    globalVarFnNames.add(init.left.callee.name);
+                } else if (t.isIdentifier(init) && ['globalThis', 'global', 'window', 'self'].includes(init.name)) {
+                    verifiedGlobalVars.add(path.node.id.name);
+                }
+            }
+        },
+        AssignmentExpression(path) {
+            if (t.isIdentifier(path.node.left) && candidateVars.has(path.node.left.name)) {
+                const right = path.node.right;
+                if (t.isCallExpression(right) && t.isIdentifier(right.callee)) {
+                    verifiedGlobalVars.add(path.node.left.name);
+                    globalVarFnNames.add(right.callee.name);
+                } else if (t.isLogicalExpression(right, { operator: '||' }) && t.isCallExpression(right.left) && t.isIdentifier(right.left.callee)) {
+                    verifiedGlobalVars.add(path.node.left.name);
+                    globalVarFnNames.add(right.left.callee.name);
                 }
             }
         }
     });
 
+    const globalFunctions = new Map();
+    const globalVars = new Set();
+    for (const [fnName, info] of candidateFunctions.entries()) {
+        if (!info.globalVarName || verifiedGlobalVars.has(info.globalVarName) || ['globalThis', 'global', 'window'].includes(info.globalVarName)) {
+            globalFunctions.set(fnName, info);
+            if (info.globalVarName) {
+                globalVars.add(info.globalVarName);
+            }
+        }
+    }
+
     if (globalFunctions.size === 0 && globalVars.size === 0) return false;
 
-    // Replace calls: getGlobal(mappingKey)
     traverse(ast, {
         CallExpression(path) {
             if (t.isIdentifier(path.node.callee) && globalFunctions.has(path.node.callee.name)) {
@@ -142,7 +171,6 @@ function inlineGlobalConcealing(ast) {
             }
         },
         MemberExpression(path) {
-            // Replace direct access: globalVar["prop"] -> prop (if global)
             if (t.isIdentifier(path.node.object) && globalVars.has(path.node.object.name)) {
                 let prop = null;
                 if (path.node.computed && t.isStringLiteral(path.node.property)) {
@@ -161,7 +189,6 @@ function inlineGlobalConcealing(ast) {
         }
     });
 
-    // Remove getGlobal functions, globalVar, and getGlobalVarFn declarations if unused
     traverse(ast, {
         FunctionDeclaration(path) {
             if (path.node.id) {

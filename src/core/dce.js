@@ -14,15 +14,18 @@ function isValidIdentifier(name) {
     return /^[$A-Z_][0-9A-Z_$]*$/i.test(name) && !RESERVED_WORDS.has(name);
 }
 
-function isBodyFreeOfExternalSideEffects(fnNode) {
+function isBodyFreeOfExternalSideEffects(fnNode, topLevelFns = null, programVars = null, mutatedProgramVars = null, visitedFns = new Set()) {
     let safe = true;
     const localNames = new Set();
     if (fnNode.id && t.isIdentifier(fnNode.id)) {
         localNames.add(fnNode.id.name);
+        visitedFns.add(fnNode.id.name);
     }
     if (Array.isArray(fnNode.params)) {
         for (const p of fnNode.params) {
             if (t.isIdentifier(p)) localNames.add(p.name);
+            else if (t.isAssignmentPattern(p) && t.isIdentifier(p.left)) localNames.add(p.left.name);
+            else if (t.isRestElement(p) && t.isIdentifier(p.argument)) localNames.add(p.argument.name);
         }
     }
     traverse(fnNode.body, {
@@ -38,6 +41,15 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
         }
     });
 
+    const isAllowedTarget = (name) => {
+        if (localNames.has(name)) return true;
+        if (programVars && programVars.has(name)) {
+            if (mutatedProgramVars) mutatedProgramVars.add(name);
+            return true;
+        }
+        return false;
+    };
+
     traverse(fnNode.body, {
         noScope: true,
         Function(p) {
@@ -52,12 +64,12 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
         AssignmentExpression(p) {
             const left = p.node.left;
             if (t.isIdentifier(left)) {
-                if (!localNames.has(left.name)) {
+                if (!isAllowedTarget(left.name)) {
                     safe = false;
                     p.stop();
                 }
             } else if (t.isMemberExpression(left)) {
-                if (!t.isIdentifier(left.object) || !localNames.has(left.object.name)) {
+                if (!t.isIdentifier(left.object) || !isAllowedTarget(left.object.name)) {
                     safe = false;
                     p.stop();
                 }
@@ -68,7 +80,79 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
         },
         UpdateExpression(p) {
             const arg = p.node.argument;
-            if (!t.isIdentifier(arg) || !localNames.has(arg.name)) {
+            if (t.isIdentifier(arg)) {
+                if (!isAllowedTarget(arg.name)) {
+                    safe = false;
+                    p.stop();
+                }
+            } else if (t.isMemberExpression(arg)) {
+                if (!t.isIdentifier(arg.object) || !isAllowedTarget(arg.object.name)) {
+                    safe = false;
+                    p.stop();
+                }
+            } else {
+                safe = false;
+                p.stop();
+            }
+        },
+        NewExpression(p) {
+            if (t.isIdentifier(p.node.callee) && (
+                ['Array', 'Object', 'RegExp', 'Date', 'Map', 'Set', 'Error', 'TypeError', 'RangeError', 'Uint8Array'].includes(p.node.callee.name) ||
+                (programVars && programVars.has(p.node.callee.name))
+            )) {
+                return;
+            }
+            safe = false;
+            p.stop();
+        },
+        CallExpression(p) {
+            const callee = p.node.callee;
+            if (t.isIdentifier(callee)) {
+                if (localNames.has(callee.name) || ['String', 'Number', 'Boolean', 'Array', 'Object', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'decodeURIComponent', 'encodeURIComponent', 'unescape', 'escape'].includes(callee.name)) {
+                    return;
+                }
+                if (topLevelFns && topLevelFns.has(callee.name)) {
+                    if (visitedFns.has(callee.name)) {
+                        return;
+                    }
+                    const targetFn = topLevelFns.get(callee.name);
+                    if (isBodyFreeOfExternalSideEffects(targetFn, topLevelFns, programVars, mutatedProgramVars, visitedFns)) {
+                        return;
+                    }
+                }
+                safe = false;
+                p.stop();
+                return;
+            }
+            if (t.isMemberExpression(callee)) {
+                const propName = !callee.computed && t.isIdentifier(callee.property)
+                    ? callee.property.name
+                    : (callee.computed && t.isStringLiteral(callee.property) ? callee.property.value : null);
+                if (t.isIdentifier(callee.object)) {
+                    if (localNames.has(callee.object.name)) {
+                        return;
+                    }
+                    if (callee.object.name === 'Math' || callee.object.name === 'Number' || callee.object.name === 'JSON') return;
+                    if (callee.object.name === 'String' && ['fromCharCode', 'fromCodePoint', 'raw'].includes(propName)) return;
+                    if (callee.object.name === 'Object' && ['create', 'keys', 'values', 'entries', 'freeze', 'getOwnPropertyDescriptor', 'getOwnPropertyNames', 'getPrototypeOf', 'defineProperty', 'assign'].includes(propName)) return;
+                    if (callee.object.name === 'Array' && ['isArray', 'from', 'of'].includes(propName)) return;
+                }
+                if (propName && ['slice', 'charCodeAt', 'codePointAt', 'charAt', 'indexOf', 'includes', 'join', 'concat', 'toString', 'valueOf', 'substring', 'substr', 'split', 'replace', 'trim', 'toLowerCase', 'toUpperCase', 'bind', 'call', 'apply', 'push', 'pop', 'shift', 'unshift', 'reverse', 'sort'].includes(propName)) {
+                    if (['push', 'pop', 'shift', 'unshift', 'reverse', 'sort'].includes(propName)) {
+                        if (t.isIdentifier(callee.object) && isAllowedTarget(callee.object.name)) {
+                            return;
+                        }
+                        safe = false;
+                        p.stop();
+                        return;
+                    }
+                    return;
+                }
+                safe = false;
+                p.stop();
+                return;
+            }
+            if (!t.isFunctionExpression(callee) && !t.isArrowFunctionExpression(callee)) {
                 safe = false;
                 p.stop();
             }
@@ -77,51 +161,51 @@ function isBodyFreeOfExternalSideEffects(fnNode) {
     return safe;
 }
 
-function isPureOrRemovableExpr(node, topLevelFns) {
+function isPureOrRemovableExpr(node, topLevelFns, programVars = null, mutatedProgramVars = null) {
     if (!node) return true;
     if (t.isLiteral(node)) return true;
     if (t.isIdentifier(node)) return true;
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) return true;
     if (t.isArrayExpression(node)) {
-        return node.elements.every(el => !el || (!t.isSpreadElement(el) && isPureOrRemovableExpr(el, topLevelFns)));
+        return node.elements.every(el => !el || (!t.isSpreadElement(el) && isPureOrRemovableExpr(el, topLevelFns, programVars, mutatedProgramVars)));
     }
     if (t.isObjectExpression(node)) {
         return node.properties.every(prop => {
             if (t.isObjectProperty(prop)) {
-                const keyOk = !prop.computed || isPureOrRemovableExpr(prop.key, topLevelFns);
-                return keyOk && isPureOrRemovableExpr(prop.value, topLevelFns);
+                const keyOk = !prop.computed || isPureOrRemovableExpr(prop.key, topLevelFns, programVars, mutatedProgramVars);
+                return keyOk && isPureOrRemovableExpr(prop.value, topLevelFns, programVars, mutatedProgramVars);
             }
             return t.isObjectMethod(prop);
         });
     }
     if (t.isUnaryExpression(node)) {
         if (node.operator === 'delete') return false;
-        return isPureOrRemovableExpr(node.argument, topLevelFns);
+        return isPureOrRemovableExpr(node.argument, topLevelFns, programVars, mutatedProgramVars);
     }
     if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
-        return isPureOrRemovableExpr(node.left, topLevelFns) && isPureOrRemovableExpr(node.right, topLevelFns);
+        return isPureOrRemovableExpr(node.left, topLevelFns, programVars, mutatedProgramVars) && isPureOrRemovableExpr(node.right, topLevelFns, programVars, mutatedProgramVars);
     }
     if (t.isConditionalExpression(node)) {
-        return isPureOrRemovableExpr(node.test, topLevelFns) &&
-            isPureOrRemovableExpr(node.consequent, topLevelFns) &&
-            isPureOrRemovableExpr(node.alternate, topLevelFns);
+        return isPureOrRemovableExpr(node.test, topLevelFns, programVars, mutatedProgramVars) &&
+            isPureOrRemovableExpr(node.consequent, topLevelFns, programVars, mutatedProgramVars) &&
+            isPureOrRemovableExpr(node.alternate, topLevelFns, programVars, mutatedProgramVars);
     }
     if (t.isMemberExpression(node)) {
-        const objOk = isPureOrRemovableExpr(node.object, topLevelFns);
-        const propOk = !node.computed || isPureOrRemovableExpr(node.property, topLevelFns);
+        const objOk = isPureOrRemovableExpr(node.object, topLevelFns, programVars, mutatedProgramVars);
+        const propOk = !node.computed || isPureOrRemovableExpr(node.property, topLevelFns, programVars, mutatedProgramVars);
         return objOk && propOk;
     }
     if (t.isSequenceExpression(node)) {
-        return node.expressions.every(e => isPureOrRemovableExpr(e, topLevelFns));
+        return node.expressions.every(e => isPureOrRemovableExpr(e, topLevelFns, programVars, mutatedProgramVars));
     }
     if (t.isNewExpression(node)) {
         if (t.isIdentifier(node.callee) && ['RegExp', 'Array', 'Object', 'Date', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Error', 'TypeError', 'RangeError'].includes(node.callee.name)) {
-            return node.arguments.every(arg => !t.isSpreadElement(arg) && isPureOrRemovableExpr(arg, topLevelFns));
+            return node.arguments.every(arg => !t.isSpreadElement(arg) && isPureOrRemovableExpr(arg, topLevelFns, programVars, mutatedProgramVars));
         }
         return false;
     }
     if (t.isCallExpression(node)) {
-        if (!node.arguments.every(arg => !t.isSpreadElement(arg) && isPureOrRemovableExpr(arg, topLevelFns))) {
+        if (!node.arguments.every(arg => !t.isSpreadElement(arg) && isPureOrRemovableExpr(arg, topLevelFns, programVars, mutatedProgramVars))) {
             return false;
         }
         const callee = node.callee;
@@ -145,11 +229,11 @@ function isPureOrRemovableExpr(node, topLevelFns) {
             }
         }
         if (t.isFunctionExpression(callee) || t.isArrowFunctionExpression(callee)) {
-            return isBodyFreeOfExternalSideEffects(callee);
+            return isBodyFreeOfExternalSideEffects(callee, topLevelFns, programVars, mutatedProgramVars);
         }
         if (t.isIdentifier(callee) && topLevelFns && topLevelFns.has(callee.name)) {
             const fnNode = topLevelFns.get(callee.name);
-            return isBodyFreeOfExternalSideEffects(fnNode);
+            return isBodyFreeOfExternalSideEffects(fnNode, topLevelFns, programVars, mutatedProgramVars);
         }
         return false;
     }
@@ -412,9 +496,13 @@ function cleanReachabilityDCE(ast) {
                     if (t.isIdentifier(dPath.node.id)) {
                         const varName = dPath.node.id.name;
                         const initNode = dPath.node.init;
-                        if (candidateBindings.has(varName) && !nonRemovableBindings.has(varName) && isPureOrRemovableExpr(initNode, topLevelFns)) {
+                        const mutatedVars = new Set();
+                        if (candidateBindings.has(varName) && !nonRemovableBindings.has(varName) && isPureOrRemovableExpr(initNode, topLevelFns, candidateBindings, mutatedVars)) {
                             if (initNode) {
                                 collectProgramRefs(dPath.get('init'), varName, ensureDepSet(varName));
+                                for (const mv of mutatedVars) {
+                                    if (mv !== varName) ensureDepSet(mv).add(varName);
+                                }
                             }
                         } else {
                             nonRemovableBindings.add(varName);
@@ -433,16 +521,20 @@ function cleanReachabilityDCE(ast) {
             if (stmtPath.isExpressionStatement()) {
                 const exprPath = stmtPath.get('expression');
                 const expr = exprPath.node;
+                const mutatedVars = new Set();
                 if (
                     t.isAssignmentExpression(expr, { operator: '=' }) &&
                     t.isIdentifier(expr.left) &&
                     candidateBindings.has(expr.left.name) &&
                     !nonRemovableBindings.has(expr.left.name) &&
                     programScope.getBinding(expr.left.name) &&
-                    isPureOrRemovableExpr(expr.right, topLevelFns)
+                    isPureOrRemovableExpr(expr.right, topLevelFns, candidateBindings, mutatedVars)
                 ) {
                     const varName = expr.left.name;
                     collectProgramRefs(exprPath.get('right'), varName, ensureDepSet(varName));
+                    for (const mv of mutatedVars) {
+                        if (mv !== varName) ensureDepSet(mv).add(varName);
+                    }
                     continue;
                 }
             }
@@ -459,7 +551,7 @@ function cleanReachabilityDCE(ast) {
                     p.parentPath.parentPath.isProgram() &&
                     p.node.operator === '=' &&
                     t.isIdentifier(p.node.left) &&
-                    isPureOrRemovableExpr(p.node.right, topLevelFns)
+                    isPureOrRemovableExpr(p.node.right, topLevelFns, candidateBindings)
                 ) {
                     return;
                 }
@@ -629,7 +721,8 @@ function polishAST(ast) {
                     if (pattern.length > 0 && !/[\r\n\u2028\u2029]/.test(pattern)) {
                         try {
                             new RegExp(pattern, flags);
-                            const safePattern = pattern.replace(/(?<!\\)\//g, '\\/');
+                            const safePattern = pattern.replace(/(\\*)(\/)/g, (m, bs, sl) => (bs.length % 2 === 0 ? bs + '\\/' : m));
+                            new Function(`return /${safePattern}/${flags};`);
                             path.replaceWith(t.regExpLiteral(safePattern, flags));
                         } catch (_) {}
                     }

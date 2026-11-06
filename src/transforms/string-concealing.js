@@ -190,7 +190,10 @@ function decodeStrings(ast) {
     traverse(ast, {
         FunctionDeclaration(path) {
             if (!path.parentPath.isProgram()) return;
+            if (path.node.params.length > 1) return;
             let hasGlobals = false;
+            let hasLoop = false;
+            let hasTry = false;
 
             path.traverse({
                 ArrayExpression(arrPath) {
@@ -201,10 +204,16 @@ function decodeStrings(ast) {
                             hasGlobals = true;
                         }
                     }
+                },
+                "ForStatement|WhileStatement"(loopPath) {
+                    if (loopPath.getFunctionParent() === path) hasLoop = true;
+                },
+                TryStatement(tryPath) {
+                    if (tryPath.getFunctionParent() === path) hasTry = true;
                 }
             });
 
-            if (hasGlobals && path.node.id && path.node.body && path.node.body.body && path.node.body.body.length < 15) {
+            if (hasGlobals && hasLoop && hasTry && path.node.id && path.node.body && path.node.body.body && path.node.body.body.length < 15) {
                 getGlobalFns.push(path.node.id.name);
                 path.get('body').replaceWith(t.blockStatement([
                     t.returnStatement(t.identifier('globalThis'))

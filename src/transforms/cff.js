@@ -528,8 +528,22 @@ function restoreCFFParamsAndFunctions(ast) {
                 }
             }
 
-            if (pattern && destructStmtIdx !== -1 &&
-                pattern.elements.every(el => !el || t.isIdentifier(el) || (t.isAssignmentPattern(el) && t.isIdentifier(el.left)) || (t.isRestElement(el) && t.isIdentifier(el.argument)))) {
+            function isValidParamNode(node) {
+                if (!node) return true;
+                if (t.isIdentifier(node)) return true;
+                if (t.isRestElement(node)) return isValidParamNode(node.argument);
+                if (t.isAssignmentPattern(node)) return isValidParamNode(node.left);
+                if (t.isArrayPattern(node)) return node.elements.every(isValidParamNode);
+                if (t.isObjectPattern(node)) {
+                    return node.properties.every(prop =>
+                        t.isRestElement(prop) ? isValidParamNode(prop.argument) : isValidParamNode(prop.value)
+                    );
+                }
+                return false;
+            }
+
+            if (pattern && destructStmtIdx !== -1 && t.isArrayPattern(pattern) &&
+                pattern.elements.every(isValidParamNode)) {
                 const newParams = pattern.elements.map((el, idx) => el ? t.cloneNode(el) : p.scope.generateUidIdentifier(`p${idx}`));
                 const paramNames = new Set();
                 for (const np of newParams) {
@@ -587,7 +601,54 @@ function restoreCFFParamsAndFunctions(ast) {
             const fnName = left.name;
             const b = p.scope.getBinding(fnName);
             if (b && b.constantViolations.length === 1 && b.path.isVariableDeclarator() && !b.path.node.init) {
+                const blockBody = p.parentPath.node.body;
+                const stmtIdx = Array.isArray(blockBody) ? blockBody.indexOf(p.node) : -1;
+                if (stmtIdx === -1) return;
+
+                let hasRefBeforeStmt = false;
+                const referencingSubFns = new Set();
+                for (const ref of b.referencePaths) {
+                    const refFn = ref.getFunctionParent();
+                    const declFn = b.path.getFunctionParent();
+                    if (refFn === declFn) {
+                        let topStmt = ref;
+                        while (topStmt && topStmt.parentPath !== p.parentPath) {
+                            topStmt = topStmt.parentPath;
+                        }
+                        if (topStmt) {
+                            const topIdx = blockBody.indexOf(topStmt.node);
+                            if (topIdx !== -1 && topIdx <= stmtIdx) {
+                                hasRefBeforeStmt = true;
+                            }
+                        }
+                    } else if (refFn && refFn.isFunctionDeclaration() && refFn.node.id) {
+                        referencingSubFns.add(refFn.node.id.name);
+                    }
+                }
+
+                if (hasRefBeforeStmt) return;
+
+                let hasPriorCallInBlock = false;
+                if (referencingSubFns.size > 0) {
+                    for (let i = 0; i < stmtIdx; i++) {
+                        const prior = blockBody[i];
+                        if (t.isExpressionStatement(prior) && t.isAssignmentExpression(prior.expression, { operator: '=' }) &&
+                            t.isCallExpression(prior.expression.right) && t.isIdentifier(prior.expression.right.callee) &&
+                            referencingSubFns.has(prior.expression.right.callee.name)) {
+                            hasPriorCallInBlock = true;
+                            break;
+                        }
+                        if (t.isVariableDeclaration(prior) && prior.declarations.some(d =>
+                            t.isCallExpression(d.init) && t.isIdentifier(d.init.callee) && referencingSubFns.has(d.init.callee.name)
+                        )) {
+                            hasPriorCallInBlock = true;
+                            break;
+                        }
+                    }
+                }
+
                 if (t.isFunctionExpression(right)) {
+                    if (hasPriorCallInBlock) return;
                     if (right.id && t.isIdentifier(right.id) && right.id.name !== fnName) {
                         const rightPath = p.get('expression.right');
                         if (rightPath && rightPath.scope) {
@@ -602,6 +663,7 @@ function restoreCFFParamsAndFunctions(ast) {
                     p.replaceWith(t.functionDeclaration(t.identifier(fnName), right.params, right.body, right.generator, right.async));
                     changed = true;
                 } else if (t.isClassExpression(right)) {
+                    if (hasPriorCallInBlock) return;
                     const declBlock = b.path.findParent(anc => anc.isBlockStatement() || anc.isProgram());
                     if (declBlock === p.parentPath) {
                         if (right.id && t.isIdentifier(right.id) && right.id.name !== fnName) {
@@ -629,9 +691,19 @@ function restoreCFFParamsAndFunctions(ast) {
                 ) {
                     const declBlock = b.path.findParent(anc => anc.isBlockStatement() || anc.isProgram());
                     if (declBlock === p.parentPath) {
-                        b.path.node.init = right;
-                        p.remove();
-                        changed = true;
+                        if (hasPriorCallInBlock) {
+                            const declParent = b.path.parentPath;
+                            b.path.remove();
+                            if (declParent && !declParent.removed && declParent.isVariableDeclaration() && declParent.node.declarations.length === 0) {
+                                declParent.remove();
+                            }
+                            p.replaceWith(t.variableDeclaration('var', [t.variableDeclarator(t.identifier(fnName), right)]));
+                            changed = true;
+                        } else {
+                            b.path.node.init = right;
+                            p.remove();
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -1203,6 +1275,41 @@ function unwrapCFF(ast) {
                                     let initVal = null;
                                     if (pi < callPath.node.arguments.length) {
                                         initVal = callPath.node.arguments[pi];
+                                        if (t.isIdentifier(initVal) && initVal.name !== 'undefined' && initVal.name !== 'arguments') {
+                                            let isBound = false;
+                                            let curr = callPath;
+                                            while (curr) {
+                                                if (curr.isFunction()) {
+                                                    for (const fp of curr.node.params) {
+                                                        if (t.isIdentifier(fp, { name: initVal.name }) ||
+                                                            (t.isRestElement(fp) && t.isIdentifier(fp.argument, { name: initVal.name })) ||
+                                                            (t.isAssignmentPattern(fp) && t.isIdentifier(fp.left, { name: initVal.name }))) {
+                                                            isBound = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if (isBound) break;
+                                                if (curr.isBlockStatement() || curr.isProgram()) {
+                                                    const stmts = curr.node.body || [];
+                                                    for (const s of stmts) {
+                                                        if (t.isVariableDeclaration(s) && s.declarations.some(d => t.isIdentifier(d.id, { name: initVal.name }))) {
+                                                            isBound = true;
+                                                            break;
+                                                        }
+                                                        if (t.isFunctionDeclaration(s) && s.id && s.id.name === initVal.name) {
+                                                            isBound = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                                if (isBound) break;
+                                                curr = curr.parentPath;
+                                            }
+                                            if (!isBound) {
+                                                initVal = t.unaryExpression('void', t.numericLiteral(0));
+                                            }
+                                        }
                                     } else if (t.isAssignmentPattern(param)) {
                                         initVal = param.right;
                                     } else {
