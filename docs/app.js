@@ -1,127 +1,86 @@
 (function () {
-    const STEP_DEFS = [
-        { id: 'moved-declarations', short: '01 Moved Decl' },
-        { id: 'constant-arrays', short: '02 Const Array' },
-        { id: 'string-concealing', short: '03 String Sandbox' },
-        { id: 'ast-scrambler', short: '04 AST Scrambler' },
-        { id: 'rgf', short: '05 RGF Unwrap' },
-        { id: 'global-concealing', short: '06 Global Conceal' },
-        { id: 'calculator', short: '07 Calculator' },
-        { id: 'opaque-predicates', short: '08 Opaque Pred' },
-        { id: 'dispatcher', short: '09 Dispatcher' },
-        { id: 'flatten', short: '10 Flatten' },
-        { id: 'cff', short: '11 CFF State' },
-        { id: 'variable-masking', short: '12 Var Masking' },
-        { id: 'polish-ast', short: '13 AST Polish' },
-        { id: 'reachability-dce', short: '14 Graph DCE' }
-    ];
-
-    const brandDot = document.getElementById('brandDot');
     const sampleSelect = document.getElementById('sampleSelect');
     const fileInput = document.getElementById('fileInput');
     const clearBtn = document.getElementById('clearBtn');
+    const themeToggle = document.getElementById('themeToggle');
+    const themeIconDark = document.getElementById('themeIconDark');
+    const themeIconLight = document.getElementById('themeIconLight');
+    const themeLabel = document.getElementById('themeLabel');
     const runBtn = document.getElementById('runBtn');
     const cancelBtn = document.getElementById('cancelBtn');
+    const workedToggle = document.getElementById('workedToggle');
+    const workedText = document.getElementById('workedText');
+    const taskList = document.getElementById('taskList');
+    const liveActiveRow = document.getElementById('liveActiveRow');
+    const liveActiveLabel = document.getElementById('liveActiveLabel');
+    const liveActiveStepCounter = document.getElementById('liveActiveStepCounter');
+    const summaryMainText = document.getElementById('summaryMainText');
+    const summaryAdded = document.getElementById('summaryAdded');
+    const summaryRemoved = document.getElementById('summaryRemoved');
+    const summaryPercent = document.getElementById('summaryPercent');
     const copyBtn = document.getElementById('copyBtn');
+    const copyBtnText = document.getElementById('copyBtnText');
     const downloadBtn = document.getElementById('downloadBtn');
     const inputEditor = document.getElementById('inputEditor');
     const outputEditor = document.getElementById('outputEditor');
     const inputMeta = document.getElementById('inputMeta');
     const outputMeta = document.getElementById('outputMeta');
-    const statusBadge = document.getElementById('statusBadge');
-    const statusText = document.getElementById('statusText');
-    const liveStepTitle = document.getElementById('liveStepTitle');
-    const liveStepCounter = document.getElementById('liveStepCounter');
-    const liveTimer = document.getElementById('liveTimer');
-    const passHistory = document.getElementById('passHistory');
-    const progressBar = document.getElementById('progressBar');
-    const stepGrid = document.getElementById('stepGrid');
-    const metricPasses = document.getElementById('metricPasses');
-    const metricTime = document.getElementById('metricTime');
-    const metricReduction = document.getElementById('metricReduction');
 
     let worker = null;
     let activeJobId = 0;
     let jobStartPerf = 0;
     let rafHandle = 0;
-    const stepStats = new Map();
-    const stepElements = new Map();
+    let isExpanded = false;
+    let totalTransformHits = 0;
 
-    function initStepGrid() {
-        stepGrid.innerHTML = '';
-        stepStats.clear();
-        stepElements.clear();
-        for (let i = 0; i < STEP_DEFS.length; i++) {
-            const def = STEP_DEFS[i];
-            stepStats.set(def.id, { hits: 0, totalMs: 0, checked: false });
-            const card = document.createElement('div');
-            card.className = 'step-card';
-            card.dataset.stepId = def.id;
-
-            const left = document.createElement('div');
-            left.className = 'step-left';
-
-            const dot = document.createElement('span');
-            dot.className = 'step-dot';
-
-            const name = document.createElement('span');
-            name.className = 'step-name';
-            name.textContent = def.short;
-
-            const meta = document.createElement('span');
-            meta.className = 'step-meta';
-            meta.textContent = '-';
-
-            left.appendChild(dot);
-            left.appendChild(name);
-            card.appendChild(left);
-            card.appendChild(meta);
-            stepGrid.appendChild(card);
-            stepElements.set(def.id, { card, meta });
+    function applyTheme(theme) {
+        const next = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        const isDark = next === 'dark';
+        if (isDark) {
+            themeIconDark.removeAttribute('hidden');
+            themeIconLight.setAttribute('hidden', '');
+        } else {
+            themeIconDark.setAttribute('hidden', '');
+            themeIconLight.removeAttribute('hidden');
         }
+        themeLabel.textContent = isDark ? 'Light' : 'Dark';
+        try {
+            localStorage.setItem('deobf_theme', next);
+        } catch (e) {}
     }
 
-    function resetStepGrid() {
-        passHistory.innerHTML = '';
-        progressBar.style.width = '0%';
-        liveStepCounter.textContent = '0 / ' + STEP_DEFS.length + ' steps';
-        liveTimer.textContent = '0 ms';
-        for (let i = 0; i < STEP_DEFS.length; i++) {
-            const def = STEP_DEFS[i];
-            stepStats.set(def.id, { hits: 0, totalMs: 0, checked: false });
-            const el = stepElements.get(def.id);
-            if (el) {
-                el.card.className = 'step-card';
-                el.meta.textContent = '-';
-            }
-        }
+    function initTheme() {
+        let saved = 'dark';
+        try {
+            saved = localStorage.getItem('deobf_theme') || 'dark';
+        } catch (e) {}
+        applyTheme(saved);
     }
 
-    function startLiveClock() {
-        stopLiveClock();
-        jobStartPerf = performance.now();
-        function tick() {
-            const elapsed = Math.max(0, Math.round(performance.now() - jobStartPerf));
-            liveTimer.textContent = elapsed + ' ms';
-            rafHandle = requestAnimationFrame(tick);
-        }
-        rafHandle = requestAnimationFrame(tick);
+    themeToggle.addEventListener('click', function () {
+        const current = document.documentElement.getAttribute('data-theme') || 'dark';
+        applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
+
+    function toggleTaskFeed() {
+        isExpanded = !isExpanded;
+        workedToggle.classList.toggle('is-expanded', isExpanded);
+        taskList.classList.toggle('is-expanded', isExpanded);
     }
 
-    function stopLiveClock(finalMs) {
-        if (rafHandle) {
-            cancelAnimationFrame(rafHandle);
-            rafHandle = 0;
-        }
-        if (typeof finalMs === 'number') {
-            liveTimer.textContent = finalMs + ' ms';
-        }
-    }
+    workedToggle.addEventListener('click', toggleTaskFeed);
+    document.querySelector('.summary-left').addEventListener('click', toggleTaskFeed);
 
     function formatBytes(bytes) {
         if (bytes < 1024) return bytes + ' B';
         if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
         return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function formatDuration(ms) {
+        if (ms < 1000) return Math.max(0, Math.round(ms)) + 'ms';
+        return (ms / 1000).toFixed(1) + 's';
     }
 
     function countLines(text) {
@@ -140,60 +99,105 @@
         outputMeta.textContent = formatBytes(outVal.length) + ' · ' + countLines(outVal) + ' lines';
     }
 
-    function setState(state, headline, footerMsg) {
-        statusBadge.className = 'badge badge-' + state.toLowerCase();
-        statusBadge.textContent = state;
-        liveStepTitle.textContent = headline;
-        if (footerMsg) {
-            statusText.textContent = footerMsg;
+    function startLiveClock() {
+        stopLiveClock();
+        jobStartPerf = performance.now();
+        function tick() {
+            const elapsedSec = ((performance.now() - jobStartPerf) / 1000).toFixed(1);
+            workedText.textContent = 'Working · ' + elapsedSec + 's';
+            rafHandle = requestAnimationFrame(tick);
         }
-        const isRunning = state === 'RUNNING';
-        runBtn.disabled = isRunning;
-        cancelBtn.hidden = !isRunning;
-        if (isRunning) {
-            brandDot.classList.add('is-running');
-        } else {
-            brandDot.classList.remove('is-running');
+        rafHandle = requestAnimationFrame(tick);
+    }
+
+    function stopLiveClock(finalMs) {
+        if (rafHandle) {
+            cancelAnimationFrame(rafHandle);
+            rafHandle = 0;
+        }
+        if (typeof finalMs === 'number') {
+            const sec = finalMs >= 100 ? (finalMs / 1000).toFixed(1) + 's' : finalMs + 'ms';
+            workedText.textContent = 'Worked for ' + sec;
         }
     }
 
-    function renderStepCardState(stepId, isRunningNow) {
-        const el = stepElements.get(stepId);
-        const st = stepStats.get(stepId);
-        if (!el || !st) return;
-        if (isRunningNow) {
-            el.card.className = 'step-card is-running';
-            el.meta.textContent = 'run...';
-            return;
+    function createCheckIconSvg() {
+        const span = document.createElement('span');
+        span.className = 'task-icon';
+        span.innerHTML =
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M8.5 12.5l2.3 2.3 4.7-4.8"></path></svg>';
+        return span;
+    }
+
+    function createChevronSvg() {
+        const span = document.createElement('span');
+        span.className = 'task-icon';
+        span.innerHTML =
+            '<svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"></path></svg>';
+        return span;
+    }
+
+    function appendCompletedTaskRow(label, durationMs) {
+        const row = document.createElement('div');
+        row.className = 'task-row';
+
+        const prefix = document.createElement('span');
+        prefix.className = 'task-prefix';
+        prefix.textContent = 'Started';
+
+        const icon = createCheckIconSvg();
+
+        const text = document.createElement('span');
+        text.className = 'task-label';
+        text.textContent = label;
+
+        const dur = document.createElement('span');
+        dur.className = 'task-duration';
+        dur.textContent = typeof durationMs === 'number' ? formatDuration(durationMs) : '';
+
+        row.appendChild(prefix);
+        row.appendChild(icon);
+        row.appendChild(text);
+        if (typeof durationMs === 'number') {
+            row.appendChild(dur);
         }
-        if (st.hits > 0) {
-            el.card.className = 'step-card is-applied';
-            el.meta.textContent = st.hits + 'x · ' + st.totalMs + 'ms';
-        } else if (st.checked) {
-            el.card.className = 'step-card is-checked';
-            el.meta.textContent = st.totalMs + 'ms';
-        } else {
-            el.card.className = 'step-card';
-            el.meta.textContent = '-';
+        row.appendChild(createChevronSvg());
+
+        taskList.appendChild(row);
+        const allRows = taskList.querySelectorAll('.task-row');
+        for (let i = 0; i < allRows.length; i++) {
+            if (i < allRows.length - 2) {
+                allRows[i].classList.add('is-collapsed-history');
+            } else {
+                allRows[i].classList.remove('is-collapsed-history');
+            }
         }
+        taskList.scrollTop = taskList.scrollHeight;
+    }
+
+    function setRunningUI(isRunning) {
+        runBtn.disabled = isRunning;
+        cancelBtn.hidden = !isRunning;
+        liveActiveRow.hidden = !isRunning;
     }
 
     function handleProgressEvent(info) {
         if (!info) return;
         if (info.type === 'stage') {
-            const linkedStepId = info.stage === 'unpack' ? 'rgf' : info.stage === 'dce' ? 'reachability-dce' : null;
             if (info.status === 'running') {
-                setState('RUNNING', info.label + '...', 'Running stage: ' + info.label);
-                if (linkedStepId) renderStepCardState(linkedStepId, true);
+                liveActiveLabel.textContent = info.label;
+                liveActiveStepCounter.textContent = '';
             } else if (info.status === 'done') {
-                if (linkedStepId) {
-                    const st = stepStats.get(linkedStepId);
-                    if (st) {
-                        st.checked = true;
-                        st.totalMs += info.stepMs || 0;
-                        if (info.changed) st.hits += 1;
-                    }
-                    renderStepCardState(linkedStepId, false);
+                if (info.stage === 'unpack' && info.changed) {
+                    totalTransformHits++;
+                    appendCompletedTaskRow('Unpack outer layers & RGF', info.stepMs);
+                } else if (info.stage === 'parse') {
+                    appendCompletedTaskRow('Parse Babel AST', info.stepMs);
+                } else if (info.stage === 'dce' && info.changed) {
+                    totalTransformHits++;
+                    appendCompletedTaskRow('Reachability graph dead-code sweep', info.stepMs);
+                } else if (info.stage === 'generate') {
+                    appendCompletedTaskRow('Format & beautify clean JavaScript', info.stepMs);
                 }
                 if (info.previewCode) {
                     outputEditor.value = info.previewCode;
@@ -202,47 +206,21 @@
             }
             return;
         }
-        if (info.type === 'pass-start') {
-            metricPasses.textContent = 'Passes: ' + info.pass;
-            progressBar.style.width = '4%';
-            setState('RUNNING', 'Pass ' + info.pass + ' · Starting 14 AST transforms...', 'Executing Pass ' + info.pass);
-            return;
-        }
         if (info.type === 'step-start') {
-            const pct = Math.min(98, Math.round(((info.stepIndex - 0.5) / info.stepTotal) * 100));
-            progressBar.style.width = pct + '%';
-            liveStepCounter.textContent = 'Pass ' + info.pass + ' · ' + info.stepIndex + ' / ' + info.stepTotal + ' steps';
-            setState(
-                'RUNNING',
-                'Pass ' + info.pass + ' · [' + info.stepIndex + '/' + info.stepTotal + '] ' + info.stepLabel,
-                'Running transform: ' + info.stepLabel
-            );
-            renderStepCardState(info.stepId, true);
+            liveActiveLabel.textContent = 'Pass ' + info.pass + ' · ' + info.stepLabel;
+            liveActiveStepCounter.textContent = info.stepIndex + '/' + info.stepTotal;
             return;
         }
         if (info.type === 'step-done') {
-            const st = stepStats.get(info.stepId);
-            if (st) {
-                st.checked = true;
-                st.totalMs += info.stepMs || 0;
-                if (info.changed) {
-                    st.hits += 1;
-                }
+            if (info.changed) {
+                totalTransformHits++;
+                appendCompletedTaskRow('Pass ' + info.pass + ' · ' + info.stepLabel, info.stepMs);
+                summaryMainText.textContent =
+                    totalTransformHits + (totalTransformHits === 1 ? ' transform applied' : ' transforms applied');
             }
-            renderStepCardState(info.stepId, false);
-            const pct = Math.min(99, Math.round((info.stepIndex / info.stepTotal) * 100));
-            progressBar.style.width = pct + '%';
-            liveStepCounter.textContent = 'Pass ' + info.pass + ' · ' + info.stepIndex + ' / ' + info.stepTotal + ' steps';
             return;
         }
         if (info.type === 'pass-done') {
-            const pill = document.createElement('span');
-            pill.className = 'pass-pill' + (info.mutatedCount > 0 ? ' has-mutations' : '');
-            pill.textContent =
-                info.mutatedCount > 0
-                    ? 'P' + info.pass + ': ' + info.mutatedCount + ' hits (' + info.passMs + 'ms)'
-                    : 'P' + info.pass + ': converged (' + info.passMs + 'ms)';
-            passHistory.appendChild(pill);
             if (info.previewCode) {
                 outputEditor.value = info.previewCode;
                 updateMeta();
@@ -269,35 +247,25 @@
         } catch (err) {
             if (jobId !== activeJobId) return;
             stopLiveClock();
-            setState('ERROR', 'Pipeline Error', err && err.message ? err.message : String(err));
+            setRunningUI(false);
+            workedText.textContent = 'Error · ' + (err && err.message ? err.message : String(err));
         }
     }
 
     function applyResult(result) {
         stopLiveClock(result.elapsedMs);
-        progressBar.style.width = '100%';
-        liveStepCounter.textContent = STEP_DEFS.length + ' / ' + STEP_DEFS.length + ' steps';
+        setRunningUI(false);
         outputEditor.value = result.code || '';
         updateMeta();
-        metricPasses.textContent = 'Passes: ' + result.passes;
-        metricTime.textContent = 'Time: ' + result.elapsedMs + ' ms';
-        metricReduction.textContent =
-            'Reduction: ' +
-            formatBytes(result.inputBytes) +
-            ' -> ' +
-            formatBytes(result.outputBytes) +
-            ' (-' +
-            result.reductionPct +
-            '%)';
-        let totalApplied = 0;
-        stepStats.forEach(function (st) {
-            totalApplied += st.hits;
-        });
-        setState(
-            'DONE',
-            'Completed ' + result.passes + ' passes (' + totalApplied + ' transform hits) in ' + result.elapsedMs + ' ms',
-            'Deobfuscated in ' + result.elapsedMs + ' ms'
-        );
+        summaryMainText.textContent =
+            totalTransformHits +
+            (totalTransformHits === 1 ? ' transform' : ' transforms') +
+            ' across ' +
+            result.passes +
+            (result.passes === 1 ? ' pass' : ' passes');
+        summaryAdded.textContent = '+' + formatBytes(result.outputBytes);
+        summaryRemoved.textContent = '-' + formatBytes(result.inputBytes);
+        summaryPercent.textContent = '(-' + result.reductionPct + '%)';
     }
 
     function ensureWorker() {
@@ -313,7 +281,8 @@
                     applyResult(data.result);
                 } else if (data.type === 'ERROR') {
                     stopLiveClock();
-                    setState('ERROR', 'Pipeline Error', data.message || 'Deobfuscation error');
+                    setRunningUI(false);
+                    workedText.textContent = 'Error · ' + (data.message || 'Deobfuscation failed');
                 }
             };
             worker.onerror = function (err) {
@@ -331,17 +300,22 @@
     function startDeobfuscation() {
         const code = inputEditor.value;
         if (!code || !code.trim()) {
-            setState('IDLE', 'Paste or select an obfuscated script first', 'Ready');
+            workedText.textContent = 'Paste or select an obfuscated script';
             return;
         }
         activeJobId++;
         const jobId = activeJobId;
-        resetStepGrid();
+        totalTransformHits = 0;
+        taskList.innerHTML = '';
+        summaryMainText.textContent = 'Running AST transforms...';
+        summaryAdded.textContent = '+0 B';
+        summaryRemoved.textContent = '-' + formatBytes(code.length);
+        summaryPercent.textContent = '';
+
+        setRunningUI(true);
+        liveActiveLabel.textContent = 'Starting AST pipeline...';
+        liveActiveStepCounter.textContent = '';
         startLiveClock();
-        setState('RUNNING', 'Initializing AST Pipeline...', 'Starting deobfuscation pipeline...');
-        metricPasses.textContent = 'Passes: 0';
-        metricTime.textContent = 'Time: ...';
-        metricReduction.textContent = 'Reduction: ...';
 
         const w = ensureWorker();
         if (w) {
@@ -364,7 +338,8 @@
             worker.terminate();
             worker = null;
         }
-        setState('IDLE', 'Cancelled by user', 'Cancelled');
+        setRunningUI(false);
+        workedText.textContent = 'Stopped';
     }
 
     function loadSample(sampleKey) {
@@ -374,7 +349,6 @@
         inputEditor.value = item.code;
         outputEditor.value = '';
         updateMeta();
-        setState('IDLE', 'Loaded ' + item.label, 'Loaded ' + item.label);
     }
 
     sampleSelect.addEventListener('change', function () {
@@ -388,14 +362,16 @@
     clearBtn.addEventListener('click', function () {
         activeJobId++;
         stopLiveClock(0);
+        setRunningUI(false);
         inputEditor.value = '';
         outputEditor.value = '';
-        resetStepGrid();
+        taskList.innerHTML = '';
+        workedText.textContent = 'Worked for 0.0s';
+        summaryMainText.textContent = '0 transforms applied';
+        summaryAdded.textContent = '+0 B';
+        summaryRemoved.textContent = '-0 B';
+        summaryPercent.textContent = '(0%)';
         updateMeta();
-        metricPasses.textContent = 'Passes: -';
-        metricTime.textContent = 'Time: -';
-        metricReduction.textContent = 'Reduction: -';
-        setState('IDLE', 'Ready (Ctrl+Enter to run)', 'Cleared');
     });
 
     fileInput.addEventListener('change', function () {
@@ -406,7 +382,6 @@
             inputEditor.value = String(reader.result || '');
             outputEditor.value = '';
             updateMeta();
-            setState('IDLE', 'Loaded file: ' + file.name, 'Loaded file: ' + file.name);
             startDeobfuscation();
         };
         reader.readAsText(file);
@@ -417,9 +392,9 @@
         if (!text) return;
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text).then(function () {
-                copyBtn.textContent = 'Copied';
+                copyBtnText.textContent = 'Copied';
                 setTimeout(function () {
-                    copyBtn.textContent = 'Copy';
+                    copyBtnText.textContent = 'Copy';
                 }, 1200);
             });
         }
@@ -448,7 +423,7 @@
         }
     });
 
-    initStepGrid();
+    initTheme();
     loadSample(sampleSelect.value);
     startDeobfuscation();
 })();

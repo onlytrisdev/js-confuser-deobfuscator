@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,90 +8,121 @@
 </head>
 <body>
     <header class="topbar">
-        <div class="brand">
-            <span id="brandDot" class="brand-dot"></span>
-            <h1 class="brand-title">js-confuser-deobfuscator</h1>
-            <span class="brand-tag">AST Engine · 14 Transforms</span>
+        <div class="topbar-left">
+            <h1 class="app-title">js-confuser-deobfuscator</h1>
         </div>
-        <div class="toolbar">
-            <select id="sampleSelect" class="select-input" aria-label="Load sample preset">
-                <option value="dispatcher-masking">Sample: Dispatcher + Flatten + Masking</option>
-                <option value="preset-low">Sample: Preset Low</option>
-                <option value="preset-medium">Sample: Preset Medium</option>
-                <option value="cff-calculator">Sample: CFF + Calculator + Dead Code</option>
-                <option value="preset-high">Sample: Preset High (All 14 Layers)</option>
+        <div class="topbar-right">
+            <select id="sampleSelect" class="pill-select" aria-label="Select obfuscated sample">
+                <option value="dispatcher-masking">Dispatcher + Flatten + Masking</option>
+                <option value="preset-low">Preset Low</option>
+                <option value="preset-medium">Preset Medium</option>
+                <option value="cff-calculator">CFF + Calculator + Dead Code</option>
+                <option value="preset-high">Preset High (All 14 Layers)</option>
             </select>
-            <label for="fileInput" class="btn btn-ghost">Upload .js</label>
+            <label for="fileInput" class="pill-btn">Upload</label>
             <input id="fileInput" type="file" accept=".js,.mjs,.cjs,.txt" hidden>
-            <button id="clearBtn" class="btn btn-ghost" type="button">Clear</button>
-            <button id="runBtn" class="btn btn-primary" type="button">Deobfuscate</button>
-            <button id="cancelBtn" class="btn btn-danger" type="button" hidden>Cancel</button>
+            <button id="clearBtn" class="pill-btn" type="button">Clear</button>
+            <button id="themeToggle" class="pill-btn icon-btn" type="button" aria-label="Toggle Light/Dark Theme" title="Toggle Light/Dark Theme">
+                <svg id="themeIconDark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                </svg>
+                <svg id="themeIconLight" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden>
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                </svg>
+                <span id="themeLabel">Light</span>
+            </button>
+            <button id="runBtn" class="run-btn" type="button">
+                <span>Deobfuscate</span>
+                <span class="run-arrow">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 12h14M13 5l7 7-7 7"></path>
+                    </svg>
+                </span>
+            </button>
+            <button id="cancelBtn" class="pill-btn stop-btn" type="button" hidden>Stop</button>
         </div>
     </header>
 
-    <section class="pipeline-strip" aria-label="Live deobfuscation pipeline progress">
-        <div class="pipeline-header">
-            <div class="pipeline-status">
-                <span id="statusBadge" class="badge badge-idle">IDLE</span>
-                <span id="liveStepTitle" class="live-step-title">Ready (Ctrl+Enter to run)</span>
-                <div id="passHistory" class="pass-history"></div>
-            </div>
-            <div class="pipeline-counters">
-                <span id="liveStepCounter" class="live-counter">0 / 14 steps</span>
-                <span id="liveTimer" class="live-timer">0 ms</span>
-            </div>
-        </div>
-        <div class="progress-track">
-            <div id="progressBar" class="progress-fill"></div>
-        </div>
-        <div id="stepGrid" class="step-grid"></div>
-    </section>
+    <div class="container">
+        <section class="activity-feed" aria-label="Deobfuscation task progress">
+            <button id="workedToggle" class="worked-row" type="button">
+                <span id="workedText">Worked for 0.0s</span>
+                <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 18l6-6-6-6"></path>
+                </svg>
+            </button>
 
-    <main class="workspace">
-        <section class="pane">
-            <div class="pane-header">
-                <span class="pane-title">INPUT · OBFUSCATED</span>
-                <span id="inputMeta" class="pane-meta">0 B · 0 lines</span>
-            </div>
-            <textarea
-                id="inputEditor"
-                class="code-editor"
-                spellcheck="false"
-                autocapitalize="off"
-                autocomplete="off"
-                placeholder="Paste js-confuser obfuscated JavaScript here..."
-            ></textarea>
-        </section>
+            <div id="taskList" class="task-list"></div>
 
-        <section class="pane">
-            <div class="pane-header">
-                <span class="pane-title">OUTPUT · DEOBFUSCATED</span>
-                <div class="pane-actions">
-                    <span id="outputMeta" class="pane-meta">0 B · 0 lines</span>
-                    <button id="copyBtn" class="btn btn-xs" type="button">Copy</button>
-                    <button id="downloadBtn" class="btn btn-xs" type="button">Download</button>
+            <div id="liveActiveRow" class="task-row is-active" hidden>
+                <span class="task-prefix">Started</span>
+                <span class="task-icon spinner-icon" aria-hidden="true"></span>
+                <span id="liveActiveLabel" class="task-label">Initializing AST pipeline...</span>
+                <span id="liveActiveStepCounter" class="task-duration"></span>
+            </div>
+
+            <div id="summaryBar" class="summary-bar">
+                <div class="summary-left">
+                    <span id="summaryMainText" class="summary-main">0 transforms applied</span>
+                    <span id="summaryAdded" class="diff-add">+0 B</span>
+                    <span id="summaryRemoved" class="diff-del">-0 B</span>
+                    <span id="summaryPercent" class="summary-pct">(0%)</span>
+                    <svg class="chevron-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M9 18l6-6-6-6"></path>
+                    </svg>
+                </div>
+                <div class="summary-actions">
+                    <button id="copyBtn" class="review-btn" type="button">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        <span id="copyBtnText">Copy</span>
+                    </button>
+                    <button id="downloadBtn" class="review-btn" type="button">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span>Download</span>
+                    </button>
                 </div>
             </div>
-            <textarea
-                id="outputEditor"
-                class="code-editor"
-                spellcheck="false"
-                readonly
-                placeholder="Clean deobfuscated JavaScript will appear here..."
-            ></textarea>
         </section>
-    </main>
 
-    <footer class="statusbar">
-        <div class="status-left">
-            <span id="statusText" class="status-message">Web Worker AST Pipeline Ready</span>
-        </div>
-        <div class="status-right">
-            <span id="metricPasses" class="metric">Passes: -</span>
-            <span id="metricTime" class="metric">Time: -</span>
-            <span id="metricReduction" class="metric">Reduction: -</span>
-        </div>
-    </footer>
+        <main class="workspace">
+            <section class="editor-card">
+                <div class="card-header">
+                    <span class="card-title">Input</span>
+                    <span id="inputMeta" class="card-meta">0 B · 0 lines</span>
+                </div>
+                <textarea
+                    id="inputEditor"
+                    class="code-editor"
+                    spellcheck="false"
+                    autocapitalize="off"
+                    autocomplete="off"
+                    placeholder="Paste obfuscated JavaScript here..."
+                ></textarea>
+            </section>
+
+            <section class="editor-card">
+                <div class="card-header">
+                    <span class="card-title">Output</span>
+                    <span id="outputMeta" class="card-meta">0 B · 0 lines</span>
+                </div>
+                <textarea
+                    id="outputEditor"
+                    class="code-editor"
+                    spellcheck="false"
+                    readonly
+                    placeholder="Deobfuscated JavaScript will appear here..."
+                ></textarea>
+            </section>
+        </main>
+    </div>
 
     <script src="./deobfuscator.bundle.js"></script>
     <script src="./samples.js"></script>
