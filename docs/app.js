@@ -181,6 +181,9 @@
         liveActiveRow.hidden = !isRunning;
     }
 
+    let detectedLayers = [];
+    let autoRunTimer = 0;
+
     function handleProgressEvent(info) {
         if (!info) return;
         if (info.type === 'stage') {
@@ -190,14 +193,16 @@
             } else if (info.status === 'done') {
                 if (info.stage === 'unpack' && info.changed) {
                     totalTransformHits++;
-                    appendCompletedTaskRow('Unpack outer layers & RGF', info.stepMs);
+                    if (!detectedLayers.includes('Pack/RGF')) detectedLayers.push('Pack/RGF');
+                    appendCompletedTaskRow('Detected & unpacked outer RGF / Pack layer', info.stepMs);
                 } else if (info.stage === 'parse') {
-                    appendCompletedTaskRow('Parse Babel AST', info.stepMs);
+                    appendCompletedTaskRow('Parsed Babel AST & scanning 14 obfuscation patterns', info.stepMs);
                 } else if (info.stage === 'dce' && info.changed) {
                     totalTransformHits++;
-                    appendCompletedTaskRow('Reachability graph dead-code sweep', info.stepMs);
+                    if (!detectedLayers.includes('Dead Code')) detectedLayers.push('Dead Code');
+                    appendCompletedTaskRow('Swept unreachable dead-code clones', info.stepMs);
                 } else if (info.stage === 'generate') {
-                    appendCompletedTaskRow('Format & beautify clean JavaScript', info.stepMs);
+                    appendCompletedTaskRow('Formatted clean JavaScript output', info.stepMs);
                 }
                 if (info.previewCode) {
                     outputEditor.value = info.previewCode;
@@ -207,16 +212,23 @@
             return;
         }
         if (info.type === 'step-start') {
-            liveActiveLabel.textContent = 'Pass ' + info.pass + ' · ' + info.stepLabel;
+            liveActiveLabel.textContent = 'Pass ' + info.pass + ' · Scanning ' + info.stepLabel;
             liveActiveStepCounter.textContent = info.stepIndex + '/' + info.stepTotal;
             return;
         }
         if (info.type === 'step-done') {
             if (info.changed) {
                 totalTransformHits++;
-                appendCompletedTaskRow('Pass ' + info.pass + ' · ' + info.stepLabel, info.stepMs);
+                if (!detectedLayers.includes(info.stepLabel)) {
+                    detectedLayers.push(info.stepLabel);
+                }
+                appendCompletedTaskRow('Pass ' + info.pass + ' · Unwrapped ' + info.stepLabel, info.stepMs);
                 summaryMainText.textContent =
-                    totalTransformHits + (totalTransformHits === 1 ? ' transform applied' : ' transforms applied');
+                    'Detected ' +
+                    detectedLayers.length +
+                    (detectedLayers.length === 1 ? ' layer (' : ' layers (') +
+                    totalTransformHits +
+                    ' hits)';
             }
             return;
         }
@@ -248,7 +260,7 @@
             if (jobId !== activeJobId) return;
             stopLiveClock();
             setRunningUI(false);
-            workedText.textContent = 'Error · ' + (err && err.message ? err.message : String(err));
+            workedText.textContent = 'Syntax / AST Error · ' + (err && err.message ? err.message : String(err));
         }
     }
 
@@ -257,12 +269,19 @@
         setRunningUI(false);
         outputEditor.value = result.code || '';
         updateMeta();
-        summaryMainText.textContent =
-            totalTransformHits +
-            (totalTransformHits === 1 ? ' transform' : ' transforms') +
-            ' across ' +
-            result.passes +
-            (result.passes === 1 ? ' pass' : ' passes');
+        if (detectedLayers.length > 0) {
+            summaryMainText.textContent =
+                'Auto-detected ' +
+                detectedLayers.length +
+                (detectedLayers.length === 1 ? ' layer' : ' layers') +
+                ' (' +
+                totalTransformHits +
+                ' hits · ' +
+                result.passes +
+                (result.passes === 1 ? ' pass)' : ' passes)');
+        } else {
+            summaryMainText.textContent = 'No obfuscation layers detected (formatted cleanly)';
+        }
         summaryAdded.textContent = '+' + formatBytes(result.outputBytes);
         summaryRemoved.textContent = '-' + formatBytes(result.inputBytes);
         summaryPercent.textContent = '(-' + result.reductionPct + '%)';
@@ -282,7 +301,7 @@
                 } else if (data.type === 'ERROR') {
                     stopLiveClock();
                     setRunningUI(false);
-                    workedText.textContent = 'Error · ' + (data.message || 'Deobfuscation failed');
+                    workedText.textContent = 'Syntax / AST Error · ' + (data.message || 'Deobfuscation failed');
                 }
             };
             worker.onerror = function (err) {
@@ -298,22 +317,27 @@
     }
 
     function startDeobfuscation() {
+        if (autoRunTimer) {
+            clearTimeout(autoRunTimer);
+            autoRunTimer = 0;
+        }
         const code = inputEditor.value;
         if (!code || !code.trim()) {
-            workedText.textContent = 'Paste or select an obfuscated script';
+            workedText.textContent = 'Paste or drop any obfuscated script to auto-deobfuscate';
             return;
         }
         activeJobId++;
         const jobId = activeJobId;
         totalTransformHits = 0;
+        detectedLayers = [];
         taskList.innerHTML = '';
-        summaryMainText.textContent = 'Running AST transforms...';
+        summaryMainText.textContent = 'Auto-detecting obfuscation layers...';
         summaryAdded.textContent = '+0 B';
         summaryRemoved.textContent = '-' + formatBytes(code.length);
         summaryPercent.textContent = '';
 
         setRunningUI(true);
-        liveActiveLabel.textContent = 'Starting AST pipeline...';
+        liveActiveLabel.textContent = 'Scanning script structure...';
         liveActiveStepCounter.textContent = '';
         startLiveClock();
 
@@ -332,6 +356,10 @@
     }
 
     function cancelDeobfuscation() {
+        if (autoRunTimer) {
+            clearTimeout(autoRunTimer);
+            autoRunTimer = 0;
+        }
         activeJobId++;
         stopLiveClock();
         if (worker) {
@@ -340,6 +368,14 @@
         }
         setRunningUI(false);
         workedText.textContent = 'Stopped';
+    }
+
+    function markCustomScriptMode() {
+        const customOpt = sampleSelect.querySelector('option[value="custom"]');
+        if (customOpt) {
+            customOpt.removeAttribute('hidden');
+            sampleSelect.value = 'custom';
+        }
     }
 
     function loadSample(sampleKey) {
@@ -352,6 +388,7 @@
     }
 
     sampleSelect.addEventListener('change', function () {
+        if (sampleSelect.value === 'custom') return;
         loadSample(sampleSelect.value);
         startDeobfuscation();
     });
@@ -360,31 +397,73 @@
     cancelBtn.addEventListener('click', cancelDeobfuscation);
 
     clearBtn.addEventListener('click', function () {
+        if (autoRunTimer) {
+            clearTimeout(autoRunTimer);
+            autoRunTimer = 0;
+        }
         activeJobId++;
         stopLiveClock(0);
         setRunningUI(false);
         inputEditor.value = '';
         outputEditor.value = '';
         taskList.innerHTML = '';
-        workedText.textContent = 'Worked for 0.0s';
-        summaryMainText.textContent = '0 transforms applied';
+        workedText.textContent = 'Paste or drop any JS script to auto-deobfuscate';
+        summaryMainText.textContent = 'Waiting for input script';
         summaryAdded.textContent = '+0 B';
         summaryRemoved.textContent = '-0 B';
         summaryPercent.textContent = '(0%)';
+        markCustomScriptMode();
         updateMeta();
     });
 
-    fileInput.addEventListener('change', function () {
-        const file = fileInput.files && fileInput.files[0];
+    function handleUploadedFile(file) {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function () {
+            markCustomScriptMode();
             inputEditor.value = String(reader.result || '');
             outputEditor.value = '';
             updateMeta();
             startDeobfuscation();
         };
         reader.readAsText(file);
+    }
+
+    fileInput.addEventListener('change', function () {
+        const file = fileInput.files && fileInput.files[0];
+        handleUploadedFile(file);
+    });
+
+    inputEditor.addEventListener('paste', function () {
+        markCustomScriptMode();
+        if (autoRunTimer) clearTimeout(autoRunTimer);
+        autoRunTimer = setTimeout(function () {
+            updateMeta();
+            startDeobfuscation();
+        }, 60);
+    });
+
+    inputEditor.addEventListener('input', function () {
+        markCustomScriptMode();
+        updateMeta();
+        if (autoRunTimer) clearTimeout(autoRunTimer);
+        autoRunTimer = setTimeout(function () {
+            if (inputEditor.value && inputEditor.value.trim()) {
+                startDeobfuscation();
+            }
+        }, 500);
+    });
+
+    inputEditor.addEventListener('dragover', function (e) {
+        e.preventDefault();
+    });
+
+    inputEditor.addEventListener('drop', function (e) {
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (files && files.length > 0) {
+            e.preventDefault();
+            handleUploadedFile(files[0]);
+        }
     });
 
     copyBtn.addEventListener('click', function () {
@@ -413,8 +492,6 @@
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
     });
-
-    inputEditor.addEventListener('input', updateMeta);
 
     window.addEventListener('keydown', function (event) {
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
